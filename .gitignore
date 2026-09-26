@@ -1,0 +1,17 @@
+# compiled output, rebuilt by npm run build and on install
+dist/
+
+# Node
+node_modules/
+npm-debug.log*
+*.tgz
+
+# editor / OS cruft
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
+
+# a local npm run test:coverage report
+coverage/

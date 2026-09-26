@@ -1,0 +1,12 @@
+// compiles src/ into dist/, the folder the paf command runs from once installed
+// node strips types from nothing under node_modules, so an installed copy has to be plain JavaScript
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.spec.ts", "src/testing/**"]
+}
