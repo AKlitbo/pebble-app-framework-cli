@@ -55,17 +55,13 @@ It carries a `format` number, and `paf` keeps reading every format a supported t
 
 ## Install
 
-Install from a clone of a release tag. In WSL:
+Each release on GitHub carries the built package. Install it with npm, in WSL and on Windows alike:
 
 ```sh
-git clone --depth 1 --branch v1.0.0 https://github.com/AKlitbo/pebble-app-framework-cli.git
-cd pebble-app-framework-cli
-npm ci
-npm pack
-npm i -g --prefix ~/.local ./pebble-app-framework-cli-1.0.0.tgz
+npm i -g https://github.com/AKlitbo/pebble-app-framework-cli/releases/download/v1.0.0/pebble-app-framework-cli-1.0.0.tgz
 ```
 
-`~/.local/bin` has to be on the `PATH`, which it already is where pebble-tool is installed with uv. The tool needs Node 22.18 or later with the npm it ships with, and `git`, and has no runtime dependencies. On Windows it runs npm through the `npm-cli.js` that every Windows install of Node puts beside `node`, and stops if it is not there.
+The tool needs Node 22.18 or later with the npm it ships with, and `git`, and has no runtime dependencies. On Windows it runs npm through the `npm-cli.js` that every Windows install of Node puts beside `node`, and stops if it is not there.
 
 The sync action in `.github/actions/sync` is for a face repo's CI. A workflow loads it from this repo at a tag, such as `AKlitbo/pebble-app-framework-cli/.github/actions/sync@v1.0.0`.
 
