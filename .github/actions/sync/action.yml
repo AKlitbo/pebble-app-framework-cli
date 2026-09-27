@@ -2,8 +2,7 @@ name: paf Sync
 description: >
   Installs paf at this action's tag and fills the framework of a face repo's projects with paf sync
   --locked, so the build that follows uses exactly the framework and lock each project committed. Given a
-  face, only the project that face builds from is filled. A workflow can load it once this repo is
-  public, at 1.0.0.
+  face, only the project that face builds from is filled.
 
 inputs:
   face:
