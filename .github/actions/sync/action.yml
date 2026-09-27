@@ -1,0 +1,43 @@
+name: paf Sync
+description: >
+  Installs paf at this action's tag and fills the framework of a face repo's projects with paf sync
+  --locked, so the build that follows uses exactly the framework and lock each project committed. Given a
+  face, only the project that face builds from is filled. A workflow can load it once this repo is
+  public, at 1.0.0.
+
+inputs:
+  face:
+    description: A face, to fill only the project it builds from. Empty fills every project in the repo.
+    required: false
+    default: ''
+  node-version:
+    description: >
+      The Node version to install. paf runs under it too, so it has to be 22.18 or later. A project's
+      framework records the Node major it is built with in project/toolchain.json, and keeping this the
+      same keeps the install on the Node the framework was tested with.
+    required: false
+    default: '24'
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node
+      uses: actions/setup-node@v7
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    # the action's own folder is this repo at the tag the workflow names, so paf is built and installed
+    # from there rather than fetched again. npm ci builds dist/ through the prepare script
+    - name: Install paf
+      shell: bash
+      working-directory: ${{ github.action_path }}/../../..
+      run: |
+        npm ci --no-audit --no-fund
+        npm install --global --no-audit --no-fund .
+
+    # the face goes as one argument, and none at all when it is empty
+    - name: Sync the Framework
+      shell: bash
+      env:
+        FACE: ${{ inputs.face }}
+      run: paf sync --locked ${FACE:+"$FACE"}
