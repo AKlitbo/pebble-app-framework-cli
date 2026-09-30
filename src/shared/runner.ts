@@ -1,5 +1,5 @@
 /**
- * Running git, npm, bash, and pebble.
+ * Running git, npm, node, and pebble.
  *
  * Every command goes through a Runner, so the specs can hand in a fake that records the calls and
  * answers from a script, and nothing in a default test run starts a real process.

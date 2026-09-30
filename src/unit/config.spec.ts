@@ -18,6 +18,24 @@ describe('readConfig', () => {
     expect(result).toThrow(/paf\.config\.json gives the vibrant generator no script/);
   });
 
+  /** paf gen <face> all reads all as every generator, so the unit's own all could never run alone. */
+  test('refuses a generator called all', () => {
+    const root = makeTree({ 'paf.config.json': JSON.stringify({ framework: 'v4.1.0', gen: { all: { script: 'all.ts' } } }) });
+
+    const result = () => readConfig(root);
+
+    expect(result).toThrow(/names a generator all/);
+  });
+
+  /** Every generator goes to node, so a shell script would only fail inside node with an error about its own syntax. */
+  test('refuses a generator script that is not .ts', () => {
+    const root = makeTree({ 'paf.config.json': JSON.stringify({ framework: 'v4.1.0', gen: { vibrant: { script: 'core/tools/vibrant.sh' } } }) });
+
+    const result = () => readConfig(root);
+
+    expect(result).toThrow(/gives the vibrant generator the script core\/tools\/vibrant\.sh, and paf only runs \.ts scripts/);
+  });
+
   /** Plugins listed as an array lose their settings and their order means nothing, so the file is refused rather than read. */
   test('refuses plugins that are not a map of names to settings', () => {
     const root = makeTree({ 'paf.config.json': JSON.stringify({ framework: 'v4.1.0', plugins: ['icons'] }) });

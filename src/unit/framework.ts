@@ -16,7 +16,7 @@ import { BASE_PATHSPECS, PLUGINS_DIR, SHIP_ROOT, shipPathspecs } from '../framew
 import { messageOf } from '../shared/errors.ts';
 import { sha256 } from '../shared/hash.ts';
 import { must, type Runner } from '../shared/runner.ts';
-import { readConfig, readConfigIfSet, readPlugins, type UnitConfig } from './config.ts';
+import { readConfig, readConfigIfSet, readListed, type UnitConfig } from './config.ts';
 import { markInstallStale } from './install.ts';
 
 /** The folder in a unit that holds its framework. */
@@ -24,6 +24,9 @@ export const FRAMEWORK_DIR = 'paf';
 
 /** The stamp's name inside paf/. */
 export const FRAMEWORK_STAMP = '.paf.json';
+
+/** The folder inside paf/ that holds each listed plugin, one folder per plugin. */
+export const PLUGINS_FOLDER = 'plugins';
 
 /**
  * What a unit's paf/ holds: a commit, the tag it came from, or the local clone it was copied out of and
@@ -49,9 +52,9 @@ export function holdsPlugins(stamp: FrameworkStamp, listed: string[]): boolean {
   return [...(stamp.plugins ?? [])].sort().join(',') === [...listed].sort().join(',');
 }
 
-// what the waf build reads at configure time from paf/: its helpers, the wscript template, and the
-// package.json the sandbox's manifest is made from
-const CONFIGURE_INPUTS = ['py', path.join('tools', 'waf'), 'package.json'];
+// what a build reads from paf/ that waf does not track: the helpers and the wscript template in waf/.
+// the sandbox's manifest comes from the unit's own package.json, and the lock covers the dependencies
+const CONFIGURE_INPUTS = ['waf'];
 
 /** Every file under a path, itself when it is a file, sorted so the order never changes a hash. */
 function filesUnder(target: string): string[] {
@@ -65,18 +68,20 @@ function filesUnder(target: string): string[] {
     return [target];
   }
 
-  return fs.readdirSync(target).sort().flatMap((name) => filesUnder(path.join(target, name)));
+  // a build imports the waf helpers, and Python writes their bytecode beside them in __pycache__, which
+  // would read as an edit and start the next build clean
+  return fs.readdirSync(target).sort().filter((name) => name !== '__pycache__' && !name.endsWith('.pyc')).flatMap((name) => filesUnder(path.join(target, name)));
 }
 
 /**
- * One string naming what a build of this unit configured from, which changes when a clean build is
- * needed. A tag's commit covers everything. On a local framework only the files configure reads count,
+ * One string naming what a build of this unit was set up from, which changes when a clean build is
+ * needed. A tag's commit covers everything. On a local framework only the files waf does not track count,
  * since an edit to the framework's C or TypeScript builds incrementally and a clean build each time
  * would slow the paf use local loop for nothing. A plugin's C is staged into the build, so the plugins
  * paf/ holds are part of it too.
  *
  * @param unitDir The unit's folder.
- * @return The tag's commit, or the clone and a hash of what configure reads, with the plugins, or empty for no paf/.
+ * @return The tag's commit, or the clone and a hash of what waf does not track, with the plugins, or empty for no paf/.
  */
 export function configureIdentity(unitDir: string): string {
   const stamp = readStamp(unitDir);
@@ -105,7 +110,7 @@ export function configureIdentity(unitDir: string): string {
  */
 export function workspaceFolders(unitDir: string): string[] {
   const framework = path.join(unitDir, FRAMEWORK_DIR);
-  const plugins = path.join(framework, 'plugins');
+  const plugins = path.join(framework, PLUGINS_FOLDER);
   const names = fs.existsSync(plugins) ? fs.readdirSync(plugins, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort() : [];
 
   return [framework, ...names.map((name) => path.join(plugins, name))];
@@ -183,8 +188,8 @@ export function readStamp(unitDir: string): FrameworkStamp | null {
  * read as local builds from its clone and may have no pin, and any other unit has a pin this paf fills.
  */
 export type UnitFramework =
-  | { local: true; stamp: FrameworkStamp & { local: string }; config: UnitConfig | null; plugins: string[] }
-  | { local: false; stamp: FrameworkStamp | null; config: UnitConfig; plugins: string[] };
+  | { local: true; stamp: FrameworkStamp & { local: string }; config: UnitConfig | null; plugins: string[]; gen: UnitConfig['gen'] }
+  | { local: false; stamp: FrameworkStamp | null; config: UnitConfig; plugins: string[]; gen: UnitConfig['gen'] };
 
 /**
  * Reads what a unit builds from, the one place that decides how strictly its pin is read.
@@ -204,13 +209,15 @@ export function unitFramework(unitDir: string, repin = false): UnitFramework {
   if (stamp?.local && !repin) {
     const config = readConfigIfSet(unitDir);
 
-    // a local unit may have no pin yet, and its plugins are still listed
-    return { local: true, stamp: { ...stamp, local: stamp.local }, config, plugins: config ? Object.keys(config.plugins) : readPlugins(unitDir) };
+    // a local unit may have no pin yet, and its plugins and generators are still listed
+    const listed = config ? { plugins: Object.keys(config.plugins), gen: config.gen } : readListed(unitDir);
+
+    return { local: true, stamp: { ...stamp, local: stamp.local }, config, ...listed };
   }
 
   const config = readConfig(unitDir);
 
-  return { local: false, stamp, config, plugins: Object.keys(config.plugins) };
+  return { local: false, stamp, config, plugins: Object.keys(config.plugins), gen: config.gen };
 }
 
 /**

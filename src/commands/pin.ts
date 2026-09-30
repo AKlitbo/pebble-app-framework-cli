@@ -5,9 +5,10 @@ import { breakingEntries, sectionsBetween } from '../framework/changelog.ts';
 import { listFolders, listTags, mirrorOf, resolveRef, showFile, updateMirror } from '../framework/mirror.ts';
 import { PLUGINS_DIR, SHIP_ROOT, shipPathspecs } from '../framework/ship.ts';
 import { compareTags, isVersionTag } from '../framework/tags.ts';
-import { FRAMEWORK_MAJOR, fillableTags, latestTag, readConfigIfSet, readPlugins, unfillable, writePin } from '../unit/config.ts';
+import { FRAMEWORK_MAJOR, fillableTags, latestTag, readConfigIfSet, readListed, unfillable, writePin } from '../unit/config.ts';
 import { findUnit, unitFaces } from '../repo/units.ts';
 import type { Context } from '../shared/context.ts';
+import { readStamp } from '../unit/framework.ts';
 import { checkUnit, short, syncUnit, unitsOf } from './sync.ts';
 
 /**
@@ -63,27 +64,47 @@ export function pin(ctx: Context, target: string | undefined, wanted: string | u
   // as a candidate cut in a local clone, moves back to latest instead, since staying would leave it on a
   // pin the sync straight after refuses
   const stays = old !== null && wanted === 'latest' && unfillable(old.framework) === null && compareTags(tag, old.framework) < 0;
+  // a unit on a local framework builds from its clone whatever it pins, so it is described by the clone
+  const local = readStamp(unit.dir)?.local;
 
-  if (old && stays && resolveRef(ctx.run, mirror, old.framework)) {
-    ctx.print(`${unit.name} is on ${old.framework}, which is newer than latest, ${tag}, so it stays`);
-    syncUnit(ctx, unit, { locked: false, force: false });
+  // a unit on its clone moves onto a tag with every pin, since a pin says which framework paf/ holds.
+  // it is said once the sync has done it, so a sync that fails leaves no line saying it moved
+  const movedOff = (onto: string) => {
+    if (local) {
+      ctx.print(`${unit.name} moved off the local framework at ${local} onto ${onto}`);
+    }
+  };
+
+  const oldCommit = old && stays ? resolveRef(ctx.run, mirror, old.framework) : null;
+
+  if (old && stays && oldCommit) {
+    // the sync straight after fills from the tag the unit stays on, so it has to have every plugin the
+    // unit lists, checked before anything is printed, as a move below does
+    shipPathspecs(readListed(unit.dir).plugins, listFolders(ctx.run, mirror, oldCommit, PLUGINS_DIR), old.framework);
+
+    checkUnit(ctx, unit, { locked: false, force: false });
+    ctx.print(local
+      ? `${unit.name} pins ${old.framework}, which is newer than latest, ${tag}, so it stays on ${old.framework}`
+      : `${unit.name} is on ${old.framework}, which is newer than latest, ${tag}, so it stays`);
+    syncUnit(ctx, unit, { locked: false, force: false, repin: true });
+    movedOff(old.framework);
     return 0;
   }
 
   // the tag has to have every plugin the unit lists, checked before anything is printed or written, since
   // the sync after the pin would refuse it with paf.config.json already naming the tag
-  shipPathspecs(readPlugins(unit.dir), listFolders(ctx.run, mirror, commit, PLUGINS_DIR), tag);
+  shipPathspecs(readListed(unit.dir).plugins, listFolders(ctx.run, mirror, commit, PLUGINS_DIR), tag);
 
   // the pin is only written once the sync can go ahead, so a refusal leaves paf.config.json and paf/
-  // agreeing. a unit on a local framework moves onto the tag with it, since a pin says which framework
-  // paf/ holds
+  // agreeing
   checkUnit(ctx, unit, { locked: false, force: false });
 
   if (old && old.framework === tag) {
     // a unit already on the tag still syncs, so a paf/ that is missing or behind gets filled
     if (old.commit === commit) {
-      ctx.print(`${unit.name} is already on ${tag}`);
+      ctx.print(local ? `${unit.name} is already pinned to ${tag}` : `${unit.name} is already on ${tag}`);
       syncUnit(ctx, unit, { locked: false, force: false, repin: true });
+      movedOff(tag);
       return 0;
     }
 
@@ -122,6 +143,7 @@ export function pin(ctx: Context, target: string | undefined, wanted: string | u
 
   writePin(unit.dir, { framework: tag, commit });
   syncUnit(ctx, unit, { locked: false, force: false, repin: true });
+  movedOff(tag);
 
   return 0;
 }

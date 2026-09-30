@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { listTags, mirrorOf } from '../framework/mirror.ts';
 import { compareTags } from '../framework/tags.ts';
+import { frameworkEngines, wrongNode } from '../framework/engines.ts';
 import { compareVersions, parsePebbleVersion, parseToolchain, type Toolchain } from '../framework/toolchain.ts';
 import { fillableTags, latestTag, pinnedTag } from '../unit/config.ts';
 import { unitFaces, type Unit } from '../repo/units.ts';
@@ -203,7 +204,7 @@ export function doctor(ctx: Context): number {
   const git = ctx.run('git', ['--version'], { cwd: ctx.root, capture: true });
 
   say(git.code === 0 ? 'ok' : 'problem', git.code === 0 ? git.stdout.trim() : 'git is not on the PATH');
-  say('ok', `node ${process.versions.node}`);
+  say('ok', `node ${ctx.node}`);
 
   // one git check-ignore for every folder, which prints back the ones that are ignored. git quotes a
   // path holding a backslash, or one outside ASCII unless core.quotePath is off, so the paths are
@@ -242,6 +243,20 @@ export function doctor(ctx: Context): number {
 
   if (local.length) {
     say('note', `${local.map(({ unit }) => unit.rel).join(', ')} on a local framework, which paf use <unit> pinned puts back on its tag`);
+  }
+
+  // paf build, gen, check, and tool refuse a unit's scripts under a Node outside its framework's range.
+  // paf/ is read as it is, so a unit whose pin moved since its last sync is sent to paf sync as well
+  for (const unit of units) {
+    try {
+      const wrong = wrongNode(frameworkEngines(unit.dir), ctx.node, 'paf/package.json');
+
+      if (wrong) {
+        say('problem', `${unit.where}: ${wrong}, or run paf sync if its pin moved since the last one`);
+      }
+    } catch (error) {
+      say('problem', `${unit.where}: ${messageOf(error)}`);
+    }
   }
 
   // a toolchain paf cannot read is a problem whether or not there is a pebble to compare it with

@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { mirrorOf, resolveRef, updateMirror } from '../framework/mirror.ts';
-import { configName, readPlugins, writePin } from '../unit/config.ts';
+import { configName, readListed, writePin } from '../unit/config.ts';
 import { findUnit, findUnits, type Unit } from '../repo/units.ts';
 import type { Context } from '../shared/context.ts';
 import { must } from '../shared/runner.ts';
@@ -322,7 +322,7 @@ export function use(ctx: Context, target: string | undefined, mode: string | und
 
   // the unit's plugins come from its file whatever its pin, since going local is one way to try a
   // framework its pin does not name yet, or to work on a unit before its first pin
-  const { commit, count } = fillFromClone(ctx.run, source, unit.dir, readPlugins(unit.dir));
+  const { commit, count } = fillFromClone(ctx.run, source, unit.dir, readListed(unit.dir).plugins);
 
   ctx.print(`${unit.where}: paf/ is on ${short(commit)} from ${source}, working tree included, ${count} files`);
   ctx.print(`paf sync --locked refuses until paf use ${unit.name} pinned`);

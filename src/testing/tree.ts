@@ -8,6 +8,7 @@ import path from 'node:path';
 import { onTestFinished } from 'vitest';
 import { mirrorOf } from '../framework/mirror.ts';
 import type { Context } from '../shared/context.ts';
+import { sha256 } from '../shared/hash.ts';
 import type { RunOptions, RunResult, Runner } from '../shared/runner.ts';
 
 /**
@@ -68,7 +69,8 @@ export function makeContext(root: string, run: Runner): { ctx: Context; printed:
 
   onTestFinished(() => fs.rmSync(cache, { recursive: true, force: true }));
 
-  const ctx: Context = { root, cache, repo: 'framework', platform: 'linux', run, print: (line) => printed.push(line) };
+  // a Node the framework's engines take, so a spec only meets the Node guard when it asks for it
+  const ctx: Context = { root, cache, repo: 'framework', platform: 'linux', node: '24.18.0', run, print: (line) => printed.push(line) };
 
   // a mirror only has to look present for resolveRef to ask the runner
   fs.mkdirSync(mirrorOf(ctx), { recursive: true });
@@ -79,6 +81,9 @@ export function makeContext(root: string, run: Runner): { ctx: Context; printed:
 
 /** The commit the specs' framework tags point at. */
 export const COMMIT = 'a'.repeat(40);
+
+/** The core's package.json in a current unit, naming the build script the way the framework's does. */
+const CORE_PACKAGE = JSON.stringify({ paf: { build: { script: 'tools/build.ts' } } });
 
 /**
  * A unit pinned to v4.1.0 whose framework copy and node_modules are both current, so readying it runs
@@ -93,11 +98,13 @@ export function currentUnit(name: string, tag = 'v4.1.0'): Record<string, string
     [`watchfaces/${name}/paf.config.json`]: JSON.stringify({ framework: tag, commit: COMMIT }),
     [`watchfaces/${name}/package.json`]: '{ "workspaces": ["paf", "paf/plugins/*"] }',
     [`watchfaces/${name}/paf/.paf.json`]: JSON.stringify({ commit: COMMIT, tag }),
+    [`watchfaces/${name}/paf/package.json`]: CORE_PACKAGE,
     [`watchfaces/${name}/package-lock.json`]: '{}',
     [`watchfaces/${name}/node_modules/.paf-install.json`]: JSON.stringify({
       platform: 'linux',
       lock: '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
-      framework: '',
+      // the install was made from this paf/package.json, hashed the way frameworkPackageHash does
+      framework: sha256(['package.json', CORE_PACKAGE], 16),
     }),
   };
 }

@@ -5,9 +5,11 @@
  * that being ahead never fails, since a unit left on an old tag would otherwise nag forever once the
  * SDK moved on. A unit that cannot be read is reported on its own row, so it never hides the others.
  */
+import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { fakeRunner, makeContext, makeTree } from '../testing/tree.ts';
+import { COMMIT, currentUnit, fakeRunner, makeContext, makeTree } from '../testing/tree.ts';
+import { frameworkPackageHash } from '../unit/framework.ts';
 import { doctor, sdkVerdict, status, unitState, workflowActionTags } from './info.ts';
 
 describe('sdkVerdict', () => {
@@ -96,6 +98,43 @@ describe('status', () => {
 });
 
 describe('doctor', () => {
+  /**
+   * A paf gen refused for the Node has to show up in doctor too, or the reason is only ever one error line.
+   * The unit is otherwise clean, so the Node is the one thing that can fail it.
+   */
+  test('fails on a unit whose framework takes another Node, and on nothing else', () => {
+    const root = makeTree({
+      ...currentUnit('mosaic'),
+      'watchfaces/mosaic/paf/package.json': '{ "engines": { "node": "^22.18.0 || >=24.2.0" } }',
+    });
+    const unit = path.join(root, 'watchfaces', 'mosaic');
+    const stamp = path.join(unit, 'node_modules', '.paf-install.json');
+
+    // the install was made from this paf/package.json, so the unit reads as ready
+    fs.writeFileSync(stamp, JSON.stringify({ ...JSON.parse(fs.readFileSync(stamp, 'utf8')), framework: frameworkPackageHash(unit) }));
+
+    const { ctx, printed } = makeContext(root, fakeRunner((command, args) => {
+      if (command === 'pebble') {
+        return { code: 1 };
+      }
+
+      if (args.includes('rev-parse')) {
+        return { stdout: `${COMMIT}\n` };
+      }
+
+      return args.includes('check-ignore') ? { stdout: args.slice(args.indexOf('check-ignore') + 1).join('\n') } : undefined;
+    }).run);
+
+    ctx.node = '23.11.0';
+
+    const result = doctor(ctx);
+
+    expect(result).toBe(1);
+    expect(printed.filter((line) => /^(problem|behind) /.test(line))).toEqual([
+      'problem  watchfaces/mosaic: paf/package.json asks for Node ^22.18.0 || >=24.2.0, and this is 23.11.0. Outside it a tool can stop partway, or stop before it starts, so run paf from a Node inside it, or run paf sync if its pin moved since the last one',
+    ]);
+  });
+
   /** A unit on a local framework made doctor fail for as long as the paf use local loop was in use, though nothing was wrong. */
   test('notes a unit on a local framework rather than calling it a problem', () => {
     const root = makeTree({

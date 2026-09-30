@@ -5,10 +5,11 @@
  * Gives each family or face in a repo its own pebble-app-framework version in its own paf/, and runs
  * the framework's build, generators, and checks in place against it.
  */
-import { build, check, gen, runScript } from './commands/run.ts';
+import { build, runScript, unitCheck } from './commands/run.ts';
 import { doctor, status } from './commands/info.ts';
 import { pin } from './commands/pin.ts';
 import { sync, use } from './commands/sync.ts';
+import { check, gen, tool } from './commands/tools.ts';
 import type { Context } from './shared/context.ts';
 import { cacheHome, findRepoRoot, frameworkRepo } from './shared/home.ts';
 import { spawnRunner } from './shared/runner.ts';
@@ -25,8 +26,12 @@ usage: paf <command> [args]
                                move a unit to another tag, showing the changelog between them first
   use <unit> local [path]      point a unit's paf/ at a local framework clone, builds included
   use <unit> pinned            put it back on its tag
-  build <face|all> [--clean]   build a face in its unit (WSL only), clean when message keys or dependencies changed
-  gen <face> <kind|all>        run one of the framework's generators for a face, or all it has inputs for
+  build <face|all> [--clean]   build a face in its unit (WSL only), clean when message keys, dependencies, or the framework changed
+  gen <face> <kind|all> [args]
+                               run one generator the framework, a listed plugin, or the unit offers for a face,
+                               or all it has inputs for
+  check [unit]                 run every check the framework and the listed plugins ship, in every unit or one
+  tool <face> <name> [args]    run a tool a listed plugin offers, such as clay-preview or tap-walk
   run <unit|face> <script> [args]
                                run any npm script in a unit
   test | lint | typecheck [unit]
@@ -49,7 +54,7 @@ function takeFlag(args: string[], flag: string): boolean {
   return true;
 }
 
-/** The flags each command paf owns takes. build, gen, and run pass the rest on to the framework's tools. */
+/** The flags each command paf owns takes. build, gen, run, and tool pass the rest on to what they run. */
 const FLAGS: Record<string, string[]> = {
   sync: ['--locked', '--force'],
   status: [],
@@ -58,6 +63,7 @@ const FLAGS: Record<string, string[]> = {
   test: [],
   lint: [],
   typecheck: [],
+  check: [],
   doctor: [],
 };
 
@@ -95,6 +101,7 @@ function main(argv: string[]): number {
     cache: cacheHome(),
     repo: frameworkRepo(),
     platform: process.platform,
+    node: process.versions.node,
     run: spawnRunner,
     print: (line) => console.log(line),
   };
@@ -112,12 +119,16 @@ function main(argv: string[]): number {
       return build(ctx, args[0], args.slice(1));
     case 'gen':
       return gen(ctx, args[0], args[1], args.slice(2));
+    case 'check':
+      return check(ctx, args[0]);
+    case 'tool':
+      return tool(ctx, args[0], args[1], args.slice(2));
     case 'run':
       return runScript(ctx, args[0], args[1], args.slice(2));
     case 'test':
     case 'lint':
     case 'typecheck':
-      return check(ctx, command, args[0]);
+      return unitCheck(ctx, command, args[0]);
     case 'doctor':
       return doctor(ctx);
     default:

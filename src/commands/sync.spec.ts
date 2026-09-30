@@ -107,19 +107,12 @@ describe('syncUnit', () => {
     expect(result).toThrow(/local framework/);
   });
 
-  /** Every build syncs first, so a current unit has to cost nothing but a look. */
+  /**
+   * Every build syncs first, so a current unit has to cost nothing but a look. The unit is the shared
+   * current one, with the core's package.json and its install hash, the way a real sync leaves it.
+   */
   test('runs neither git restore nor npm for a unit that is current', () => {
-    const lock = '{}';
-    const unit = unitWith({
-      'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT }),
-      'watchfaces/ide-vscode/paf/.paf.json': JSON.stringify({ commit: COMMIT, tag: 'v4.1.0' }),
-      'watchfaces/ide-vscode/package-lock.json': lock,
-      'watchfaces/ide-vscode/node_modules/.paf-install.json': JSON.stringify({
-        platform: 'linux',
-        lock: '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
-        framework: '',
-      }),
-    });
+    const unit = unitWith(currentUnit('ide-vscode'));
     const { run, calls } = mirrorAt(COMMIT);
     const { ctx } = makeContext(path.dirname(path.dirname(unit.dir)), run);
 

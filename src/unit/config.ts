@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { majorOf, newestTag } from '../framework/tags.ts';
 import { messageOf } from '../shared/errors.ts';
+import { isObject, isScript } from '../shared/json.ts';
 
 /** The file that makes a folder a unit. */
 export const CONFIG_FILE = 'paf.config.json';
@@ -112,11 +113,6 @@ export type UnitConfig = Pin & {
   gen: Record<string, UnitGen>;
 };
 
-/** Whether a value is a plain JSON object rather than an array, null, or a single value. */
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 /** paf.config.json parsed, which is every read of the file, whatever it then checks. */
 function parseConfigFile(dir: string): unknown {
   return JSON.parse(fs.readFileSync(path.join(dir, CONFIG_FILE), 'utf8'));
@@ -179,8 +175,17 @@ function genFrom(data: Record<string, unknown>, file: string): UnitConfig['gen']
   for (const [name, entry] of Object.entries(data.gen)) {
     refuseBadName(name, 'generator', file);
 
+    // paf gen <face> all runs every generator, so one called all could never run alone
+    if (name === 'all') {
+      throw new Error(`${file} names a generator all, which paf gen <face> all reads as every generator. Give it another name`);
+    }
+
     if (!isObject(entry) || typeof entry.script !== 'string' || !entry.script) {
       throw new Error(`${file} gives the ${name} generator no script. Each one in gen holds { "script": "<path from the unit>" }`);
+    }
+
+    if (!isScript(entry.script)) {
+      throw new Error(`${file} gives the ${name} generator the script ${entry.script}, and paf only runs .ts scripts`);
     }
 
     for (const key of ['after', 'when'] as const) {
@@ -262,14 +267,18 @@ export function pinnedTag(dir: string): string | null {
 }
 
 /**
- * The plugins a unit lists, in the order the file gives them, read whether or not the file names a
- * framework yet, since a unit going local before its first pin still has plugins to copy.
+ * The plugins a unit lists, in the order the file gives them, and its own generators, read whether or
+ * not the file names a framework yet, since a unit going local before its first pin still has plugins to
+ * copy and generators to run.
  *
  * @param dir The unit's folder.
- * @return The plugin names.
+ * @return The plugin names and the generators by name.
  */
-export function readPlugins(dir: string): string[] {
-  return Object.keys(pluginsFrom(readConfigFile(dir), configName(dir)));
+export function readListed(dir: string): { plugins: string[]; gen: UnitConfig['gen'] } {
+  const data = readConfigFile(dir);
+  const file = configName(dir);
+
+  return { plugins: Object.keys(pluginsFrom(data, file)), gen: genFrom(data, file) };
 }
 
 /**

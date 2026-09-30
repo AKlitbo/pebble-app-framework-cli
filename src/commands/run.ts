@@ -1,6 +1,6 @@
 /**
- * paf build, gen, run, test, lint, and typecheck: the commands that run the framework's own tools
- * inside a unit, against that unit's paf/.
+ * paf build, run, test, lint, and typecheck: the commands that run a unit's own npm scripts or the
+ * framework's build inside a unit, against that unit's paf/.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -8,7 +8,10 @@ import { mirrorOf, resolveRef, updateMirror } from '../framework/mirror.ts';
 import { allFaces, findFace, findUnit, APPINFO_REL, type Located, type Unit } from '../repo/units.ts';
 import type { Context } from '../shared/context.ts';
 import { lockHash } from '../unit/install.ts';
-import { configureIdentity, unitFramework } from '../unit/framework.ts';
+import { configureIdentity, unitFramework, type UnitFramework } from '../unit/framework.ts';
+import { refuseNonScript, runFrameworkScript } from '../unit/scripts.ts';
+import { frameworkEngines, wrongNode } from '../framework/engines.ts';
+import { readKeys } from '../framework/keys.ts';
 import { checkUnit, syncUnit, unitsOf } from './sync.ts';
 import { messageOf } from '../shared/errors.ts';
 import { sha256 } from '../shared/hash.ts';
@@ -23,8 +26,9 @@ const fetched = new Set<string>();
  *
  * @param ctx The command context.
  * @param unit The unit.
+ * @return What the unit builds from, read before the sync, which leaves its pin and plugins as they were.
  */
-export function ready(ctx: Context, unit: Unit): void {
+export function ready(ctx: Context, unit: Unit): UnitFramework {
   // a pin this paf cannot fill stops here, before the mirror is asked
   const read = unitFramework(unit.dir);
 
@@ -49,16 +53,48 @@ export function ready(ctx: Context, unit: Unit): void {
   }
 
   syncUnit(ctx, unit, { locked: false, force: false }, read);
+
+  return read;
 }
 
-/** Readies a unit and says whether it could be, printing why not, so a run over many units carries on past it. */
-function tryReady(ctx: Context, unit: Unit): boolean {
+/**
+ * Readies a unit for a command that runs the scripts its keys or gen name, then refuses a Node outside
+ * the range its framework asks for. The range is read once the sync is done, from the framework the unit
+ * builds on now, since the paf/ before it may be a stale copy the sync replaces with one that takes this
+ * Node.
+ *
+ * @param ctx The command context.
+ * @param unit The unit.
+ * @param named Whether the refusal names the unit, for a command that does not name it already. tryReady
+ * puts the unit in front of whatever it prints.
+ * @return What the unit builds from.
+ */
+export function readyForScripts(ctx: Context, unit: Unit, named = false): UnitFramework {
+  const read = ready(ctx, unit);
+  const wrong = wrongNode(frameworkEngines(unit.dir), ctx.node, named ? `${unit.rel === '.' ? '' : `${unit.rel}/`}paf/package.json` : 'paf/package.json');
+
+  if (wrong) {
+    throw new Error(wrong);
+  }
+
+  return read;
+}
+
+/**
+ * Readies a unit and gives what it builds from, or null after printing why it could not be readied, so
+ * a run over many units carries on past it.
+ *
+ * @param ctx The command context.
+ * @param unit The unit.
+ * @param get How to ready it, ready or readyForScripts.
+ * @return What the unit builds from, or null.
+ */
+export function tryReady(ctx: Context, unit: Unit, get: (ctx: Context, unit: Unit) => UnitFramework = ready): UnitFramework | null {
   try {
-    ready(ctx, unit);
-    return true;
+    return get(ctx, unit);
   } catch (error) {
     ctx.print(`${unit.where}: ${messageOf(error)}`);
-    return false;
+    return null;
   }
 }
 
@@ -75,10 +111,9 @@ export type BuildInputs = {
  * The SDK only reads message keys at configure time, so a new key fails an incremental build on an
  * undeclared MESSAGE_KEY_ name. The bundle step does not track node_modules, so a changed dependency
  * ships the old library in a build that reports success. The waf helpers and the wscript come from
- * paf/, and a build only reads them at configure time, so a different framework there starts clean
- * too. What a build was made from is only recorded
- * when it passes, and a failed one leaves its build folder behind, so with no record the build starts
- * clean too.
+ * paf/, and waf does not track their code, so outputs the old helpers made would stay, and a different
+ * framework there starts clean too. What a build was made from is only recorded when it passes, and a
+ * failed one leaves its build folder behind, so with no record the build starts clean too.
  *
  * @param last What the last passing build here was made from, or undefined for none.
  * @param now What this one is made from.
@@ -104,13 +139,20 @@ export function cleanReason(last: BuildInputs | undefined, now: BuildInputs): st
   return null;
 }
 
-/** What a face is built from now: its message keys, the unit's lock, and what its paf/ holds. */
-function inputsOf(unit: Unit, located: Located): BuildInputs {
+/** What a face is built from now: its message keys, the unit's lock, and what its paf/ holds, worked out once per unit. */
+function inputsOf(unit: Unit, located: Located, framework: string): BuildInputs {
   const appinfo = JSON.parse(fs.readFileSync(path.join(unit.dir, located.face.rel, APPINFO_REL), 'utf8'));
   const keys = sha256(JSON.stringify(appinfo.messageKeys ?? []));
 
-  return { keys, lock: lockHash(unit.dir) ?? '', framework: configureIdentity(unit.dir) };
+  return { keys, lock: lockHash(unit.dir) ?? '', framework };
 }
+
+/** What a build runs in a unit: the core's build script and what the unit's paf/ is set up from. */
+type UnitBuild = {
+  dir: string;
+  script: string;
+  framework: string;
+};
 
 /** Where paf keeps what each face's last build was made from, inside the unit's gitignored targets/. */
 function buildStateFile(unit: Unit): string {
@@ -125,6 +167,35 @@ function readBuildState(unit: Unit): Record<string, BuildInputs> {
   }
 }
 
+/**
+ * Readies a unit for a build and finds the build script the core names under its paf key, printing why
+ * once when either fails, so build all carries on to the next unit. Only the core's key is read, since
+ * a build never runs anything a plugin offers, and a plugin's broken key should not stop it.
+ */
+function unitBuildOf(ctx: Context, unit: Unit): UnitBuild | null {
+  if (!tryReady(ctx, unit, readyForScripts)) {
+    return null;
+  }
+
+  try {
+    const [core] = readKeys(unit.dir, []);
+    const script = core.key.build?.script;
+
+    if (!script) {
+      throw new Error('paf/package.json names no build script under its paf key');
+    }
+
+    // checked here, where a refusal is printed once and build all goes on to the next unit. thrown from
+    // the face loop, it would stop build all with that face's build record already cleared
+    refuseNonScript(core.dir, script);
+
+    return { dir: core.dir, script, framework: configureIdentity(unit.dir) };
+  } catch (error) {
+    ctx.print(`${unit.where}: ${messageOf(error)}`);
+    return null;
+  }
+}
+
 /** Runs a program in a unit and says whether it passed. */
 function runIn(ctx: Context, unit: Unit, command: string, args: string[]): boolean {
   return ctx.run(command, args, { cwd: unit.dir }).code === 0;
@@ -135,7 +206,8 @@ function runIn(ctx: Context, unit: Unit, command: string, args: string[]): boole
  *
  * @param ctx The command context.
  * @param target A face, or all.
- * @param args Arguments for the framework's build.sh. --clean forces a clean build.
+ * @param args Arguments for the framework's build script, which passes all but --clean on to pebble
+ * build. --clean forces a clean build.
  * @return The exit code.
  */
 export function build(ctx: Context, target: string | undefined, args: string[]): number {
@@ -150,7 +222,8 @@ export function build(ctx: Context, target: string | undefined, args: string[]):
   const units = unitsOf(ctx);
   const unreadable: string[] = [];
   const faces = target === 'all' ? allFaces(units, unreadable) : [findFace(units, target)];
-  const readied = new Map<string, boolean>();
+  const builds = new Map<string, UnitBuild | null>();
+  const rest = scriptArgs(args);
   let failed = unreadable.length;
 
   for (const line of unreadable) {
@@ -160,11 +233,13 @@ export function build(ctx: Context, target: string | undefined, args: string[]):
   for (const located of faces) {
     const { unit } = located;
 
-    if (!readied.has(unit.dir)) {
-      readied.set(unit.dir, tryReady(ctx, unit));
+    if (!builds.has(unit.dir)) {
+      builds.set(unit.dir, unitBuildOf(ctx, unit));
     }
 
-    if (!readied.get(unit.dir)) {
+    const unitBuild = builds.get(unit.dir);
+
+    if (!unitBuild) {
       failed++;
       continue;
     }
@@ -174,15 +249,15 @@ export function build(ctx: Context, target: string | undefined, args: string[]):
 
     // one face's appinfo that cannot be read fails that face and leaves the rest of build all to go on
     try {
-      now = inputsOf(unit, located);
+      now = inputsOf(unit, located, unitBuild.framework);
     } catch (error) {
       ctx.print(`${located.face.name}: ${messageOf(error)}`);
       failed++;
       continue;
     }
 
-    const reason = args.includes('--clean') ? null : cleanReason(last, now);
-    const buildArgs = reason ? [...args, '--clean'] : args;
+    const reason = rest.includes('--clean') ? null : cleanReason(last, now);
+    const buildArgs = reason ? [...rest, '--clean'] : rest;
 
     if (reason) {
       ctx.print(`== ${located.face.name}: ${reason}, so this one is clean ==`);
@@ -194,7 +269,9 @@ export function build(ctx: Context, target: string | undefined, args: string[]):
       fs.writeFileSync(buildStateFile(unit), JSON.stringify(others, null, 2) + '\n');
     }
 
-    if (!runIn(ctx, unit, 'bash', ['lib/build.sh', located.face.name, ...buildArgs])) {
+    // the face goes first, since the build script refuses anything else there. the output goes straight
+    // through, since CI reads the memory report out of the build log
+    if (runFrameworkScript(ctx, unit, unitBuild.dir, unitBuild.script, [located.face.name, ...buildArgs]) !== 0) {
       failed++;
       continue;
     }
@@ -207,87 +284,13 @@ export function build(ctx: Context, target: string | undefined, args: string[]):
 }
 
 /**
- * What `paf gen <face> all` runs: the unit's own gen:<face> script when it has one, since that already
- * knows the face's steps, and otherwise each framework generator the face has inputs for.
+ * The arguments for a script, with a -- the user typed out of habit dropped. npm run gets its own from
+ * paf, and a framework script run through node would read everything after one as a face name.
  *
- * @param scripts The unit's package.json scripts.
- * @param face The face's name.
- * @param has Whether the face (or its family core) holds a path, relative to the face.
- * @return The npm scripts to run, each with its arguments.
+ * @param args The arguments as typed.
+ * @return The arguments to pass on.
  */
-export function genAllSteps(scripts: Record<string, string>, face: string, has: (rel: string) => boolean): string[][] {
-  if (scripts[`gen:${face}`]) {
-    return [[`gen:${face}`]];
-  }
-
-  const steps: string[][] = [];
-
-  if (has('resources/icons.json')) {
-    steps.push(['gen:icons', '--', face]);
-  }
-
-  if (has('frame/frame.config.json')) {
-    steps.push(['gen:frame', '--', face, '--theme', 'all']);
-  }
-
-  if (has('src/pkjs/clay/builder')) {
-    steps.push(['gen:clay', '--', face]);
-  }
-
-  if (has('resources/thumbnails')) {
-    steps.push(['gen:thumbnails', '--', face]);
-  }
-
-  return steps;
-}
-
-/** The unit's package.json scripts. */
-function scriptsOf(unit: Unit): Record<string, string> {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(unit.dir, 'package.json'), 'utf8')).scripts ?? {};
-  } catch {
-    return {};
-  }
-}
-
-/**
- * paf gen <face> <kind|all>
- *
- * @param ctx The command context.
- * @param face The face.
- * @param kind A generator, such as clay or frame, or all.
- * @param args More arguments for a single generator.
- * @return The exit code.
- */
-export function gen(ctx: Context, face: string | undefined, kind: string | undefined, args: string[]): number {
-  if (!face || !kind) {
-    throw new Error('usage: paf gen <face> <kind|all>');
-  }
-
-  const located = findFace(unitsOf(ctx), face);
-  const { unit } = located;
-  const faceDir = path.join(unit.dir, located.face.rel);
-  const has = (rel: string) => fs.existsSync(path.join(faceDir, rel)) || (rel.startsWith('src/pkjs/') && fs.existsSync(path.join(unit.dir, 'core', rel.slice(4))));
-  const steps = kind === 'all' ? genAllSteps(scriptsOf(unit), face, has) : [[`gen:${kind}`, '--', face, ...scriptArgs(args)]];
-
-  ready(ctx, unit);
-
-  if (steps.length === 0) {
-    ctx.print(`${face} has nothing to generate`);
-    return 0;
-  }
-
-  for (const step of steps) {
-    if (!runIn(ctx, unit, 'npm', ['run', ...step])) {
-      return 1;
-    }
-  }
-
-  return 0;
-}
-
-/** The arguments for a script, with a -- the user typed out of habit dropped, since paf adds npm's own. */
-function scriptArgs(args: string[]): string[] {
+export function scriptArgs(args: string[]): string[] {
   return args[0] === '--' ? args.slice(1) : args;
 }
 
@@ -324,7 +327,7 @@ export function runScript(ctx: Context, target: string | undefined, script: stri
  * @param target A unit or face, or undefined for every unit.
  * @return The exit code.
  */
-export function check(ctx: Context, script: string, target: string | undefined): number {
+export function unitCheck(ctx: Context, script: string, target: string | undefined): number {
   const units = unitsOf(ctx);
   const failed: string[] = [];
 

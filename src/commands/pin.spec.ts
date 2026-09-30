@@ -89,10 +89,11 @@ describe('pin', () => {
 
       return args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined;
     });
-    const { ctx } = makeContext(root, run);
+    const { ctx, printed } = makeContext(root, run);
 
     pin(ctx, 'mosaic', 'v4.2.0');
 
+    expect(printed).toContain('mosaic moved off the local framework at /work/pebble-app-framework onto v4.2.0');
     expect(JSON.parse(fs.readFileSync(path.join(root, 'watchfaces', 'mosaic', 'paf.config.json'), 'utf8')).framework).toBe('v4.2.0');
     expect(JSON.parse(fs.readFileSync(path.join(root, 'watchfaces', 'mosaic', 'paf', '.paf.json'), 'utf8'))).toEqual({ commit: COMMIT, tag: 'v4.2.0', plugins: [] });
   });
@@ -117,6 +118,71 @@ describe('pin', () => {
 
     expect(fs.readFileSync(path.join(root, 'watchfaces', 'mosaic', 'paf.config.json'), 'utf8')).toBe(candidate);
     expect(printed).toContain('mosaic is on v4.1.0-rc.27, which is newer than latest, v4.0.0, so it stays');
+  });
+
+  /** A unit that listed a plugin its newer tag lacks was told it stays, and then the sync failed on the plugin. */
+  test('refuses to stay on a tag without a plugin the unit lists, before saying it stays', () => {
+    const root = repoWith({
+      ...currentUnit('mosaic', 'v4.1.0-rc.27'),
+      'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v4.1.0-rc.27', commit: COMMIT, plugins: { frame: {} } }),
+    });
+    const { run } = fakeRunner((command, args) => {
+      if (args.includes('tag')) {
+        return { stdout: 'v4.0.0\nv4.1.0-rc.27\n' };
+      }
+
+      if (args.includes('ls-tree')) {
+        return { stdout: 'src/plugins/icons\0' };
+      }
+
+      return args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined;
+    });
+    const { ctx, printed } = makeContext(root, run);
+
+    const result = () => pin(ctx, 'mosaic', 'latest');
+
+    expect(result).toThrow(/the unit lists the plugin frame, which v4\.1\.0-rc\.27 does not have/);
+    expect(printed.filter((line) => line.includes('stays'))).toEqual([]);
+  });
+
+  /**
+   * A unit on its clone was told it was on its pinned candidate, and paf pin latest left it on the clone
+   * though every other pin moves a unit onto its tag.
+   */
+  test('moves a local unit newer than latest onto the tag it pins', () => {
+    const root = repoWith({
+      'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v4.1.0-rc.27', commit: COMMIT }),
+      'watchfaces/mosaic/paf/.paf.json': JSON.stringify({ commit: COMMIT, local: '/work/pebble-app-framework' }),
+    });
+    const { run } = fakeRunner((command, args) => {
+      if (command === 'npm') {
+        fs.mkdirSync(path.join(root, 'watchfaces', 'mosaic', 'node_modules'), { recursive: true });
+      }
+
+      if (args.includes('tag')) {
+        return { stdout: 'v4.0.0\nv4.1.0-rc.27\n' };
+      }
+
+      return args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined;
+    });
+    const { ctx, printed } = makeContext(root, run);
+
+    pin(ctx, 'mosaic', 'latest');
+
+    expect(printed).toContain('mosaic pins v4.1.0-rc.27, which is newer than latest, v4.0.0, so it stays on v4.1.0-rc.27');
+    expect(printed).toContain('mosaic moved off the local framework at /work/pebble-app-framework onto v4.1.0-rc.27');
+    expect(JSON.parse(fs.readFileSync(path.join(root, 'watchfaces', 'mosaic', 'paf', '.paf.json'), 'utf8')).tag).toBe('v4.1.0-rc.27');
+  });
+
+  /** A pin to the tag a local unit already names moved it off its clone, and the only line said it was already on the tag. */
+  test('says a local unit pinned again to its own tag moves off the clone', () => {
+    const root = repoWith({ 'watchfaces/mosaic/paf/.paf.json': JSON.stringify({ commit: COMMIT, local: '/work/pebble-app-framework' }) });
+    const { ctx, printed } = makeContext(root, syncingRun(root));
+
+    pin(ctx, 'mosaic', 'v4.1.0');
+
+    expect(printed).toContain('mosaic is already pinned to v4.1.0');
+    expect(printed).toContain('mosaic moved off the local framework at /work/pebble-app-framework onto v4.1.0');
   });
 
   /** paf.config.json made for a new unit names no framework yet, and the one command meant to choose it refused. */

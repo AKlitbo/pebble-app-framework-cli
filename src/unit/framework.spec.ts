@@ -11,7 +11,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { spawnRunner } from '../shared/runner.ts';
 import { makeTree } from '../testing/tree.ts';
-import { fillFromClone, fillFromTag } from './framework.ts';
+import { fillFromClone, fillFromTag, unitFramework } from './framework.ts';
 
 /** A framework repo laid out the framework 4 way, with a spec, fixtures, and two plugins, committed and tagged. */
 function frameworkRepo(): { source: string; mirror: string; commit: string } {
@@ -50,6 +50,24 @@ function filesIn(dir: string): string[] {
 
 /** What a unit listing only icons gets, the stamp included. */
 const SHIPPED = ['.paf.json', 'c/core/clock.c', 'package.json', 'plugins/README.md', 'plugins/icons/generate-icons.ts', 'plugins/icons/package.json', 'tools/build.ts'];
+
+describe('unitFramework', () => {
+  /**
+   * A new unit put on a local clone before its first pin still has its own generators. Reading them as
+   * none had gen all skip vibrant without a word, so the icons were built from an old colour table.
+   */
+  test('reads the generators of a local unit with no pin yet', () => {
+    const root = makeTree({
+      'paf.config.json': JSON.stringify({ plugins: { icons: {} }, gen: { vibrant: { script: 'core/tools/vibrant.ts', after: 'clay' } } }),
+      'paf/.paf.json': JSON.stringify({ commit: 'a'.repeat(40), local: '/work/pebble-app-framework' }),
+    });
+
+    const result = unitFramework(root);
+
+    expect(result.gen).toEqual({ vibrant: { script: 'core/tools/vibrant.ts', after: 'clay', when: undefined } });
+    expect(result.plugins).toEqual(['icons']);
+  });
+});
 
 describe('fillFromTag', () => {
   /**

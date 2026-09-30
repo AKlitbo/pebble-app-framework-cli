@@ -1,16 +1,16 @@
 /**
- * Specs for the decisions paf build and paf gen make before running the framework's tools.
+ * Specs for the decisions paf build, run, and the unit checks make before running anything.
  *
  * A build that should have started clean fails on an undeclared message key, or ships an old library
- * while reporting success. gen all decides which generators a face gets, and one it skips leaves a
- * stale file for the specs to catch later.
+ * while reporting success. A check over many units that stops at the first hides the failures after it.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { COMMIT, currentUnit, fakeRunner, makeContext, makeTree } from '../testing/tree.ts';
 import { configureIdentity } from '../unit/framework.ts';
-import { build, check, cleanReason, gen, genAllSteps, ready, runScript } from './run.ts';
+import { SCRIPT_FLAGS } from '../unit/scripts.ts';
+import { build, cleanReason, ready, runScript, unitCheck } from './run.ts';
 
 describe('ready', () => {
   /** Offline, a build on a unit still on framework 3 showed a git fetch error rather than how to move it. */
@@ -78,25 +78,21 @@ describe('cleanReason', () => {
   });
 });
 
-describe('genAllSteps', () => {
-  /** A face's own gen script already knows its steps, such as Gridlock's vibrant table, which no framework generator makes. */
-  test('runs the face\'s own gen script when the unit has one', () => {
-    const result = genAllSteps({ 'gen:gridlock': 'npm run gen:clay -- gridlock' }, 'gridlock', () => true);
-
-    expect(result).toEqual([['gen:gridlock']]);
-  });
-
-  /** Only the generators a face has inputs for run, since the others stop on what is missing. */
-  test('runs the generators the face has inputs for', () => {
-    const has = (rel: string) => rel === 'resources/icons.json' || rel === 'frame/frame.config.json';
-
-    const result = genAllSteps({}, 'radar-array', has);
-
-    expect(result).toEqual([['gen:icons', '--', 'radar-array'], ['gen:frame', '--', 'radar-array', '--theme', 'all']]);
-  });
-});
-
 describe('ready', () => {
+  /**
+   * The command specs lean on currentUnit being ready as it is. If its install hash stopped matching
+   * what frameworkPackageHash works out, every one of them would run a fake install and still pass.
+   */
+  test('runs no install for a current unit', () => {
+    const root = makeTree(currentUnit('mosaic'));
+    const { run, calls } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
+    const { ctx } = makeContext(root, run);
+
+    ready(ctx, { dir: path.join(root, 'watchfaces', 'mosaic'), rel: 'watchfaces/mosaic', name: 'mosaic', where: 'watchfaces/mosaic' });
+
+    expect(calls.filter((call) => call.command === 'npm')).toEqual([]);
+  });
+
   /** A build has to work offline once a sync has run, so a unit whose mirror already holds its commit must not fetch. */
   test('leaves the mirror alone when it has the pinned tag at the recorded commit', () => {
     const root = makeTree(currentUnit('mosaic'));
@@ -177,7 +173,7 @@ describe('build', () => {
       'watchfaces/mosaic/targets/.paf-build.json': JSON.stringify({ gridlock: { keys: 'k', lock: 'l', framework: COMMIT } }),
     });
     const { run } = fakeRunner((command, args) => {
-      if (command === 'bash') {
+      if (command === process.execPath) {
         return { code: 1 };
       }
 
@@ -204,7 +200,117 @@ describe('build', () => {
     const result = build(ctx, 'all', []);
 
     expect(result).toBe(1);
-    expect(calls.filter((call) => call.command === 'bash').map((call) => call.args[1])).toEqual(['gridlock']);
+    expect(calls.filter((call) => call.command === process.execPath).map((call) => call.args[SCRIPT_FLAGS.length + 1])).toEqual(['gridlock']);
+  });
+
+  /** The build script refuses anything but a face first, so a --clean put ahead of it failed every build that had to start clean. */
+  test('runs the core build script with the face first and --clean after it', () => {
+    const root = makeTree({
+      ...currentUnit('mosaic'),
+      'watchfaces/mosaic/core/.gitkeep': '',
+      'watchfaces/mosaic/gridlock/config/pebble.appinfo.json': '{ "name": "gridlock" }',
+    });
+    const { run, calls } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
+    const { ctx } = makeContext(root, run);
+
+    build(ctx, 'gridlock', ['--debug']);
+
+    const [call] = calls.filter((each) => each.command === process.execPath);
+
+    expect(call.args).toEqual([...SCRIPT_FLAGS, path.join(root, 'watchfaces', 'mosaic', 'paf', 'tools', 'build.ts'), 'gridlock', '--debug', '--clean']);
+  });
+
+  /** A -- typed out of habit went on to pebble build, which read the flag after it as something else. */
+  test('drops a typed -- before the build arguments', () => {
+    const root = makeTree({
+      ...currentUnit('mosaic'),
+      'watchfaces/mosaic/core/.gitkeep': '',
+      'watchfaces/mosaic/gridlock/config/pebble.appinfo.json': '{ "name": "gridlock" }',
+      'watchfaces/mosaic/targets/.paf-build.json': '{}',
+    });
+    const { run, calls } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
+    const { ctx } = makeContext(root, run);
+
+    build(ctx, 'gridlock', ['--', '--debug', '--clean']);
+
+    expect(calls.find((each) => each.command === process.execPath)?.args.slice(SCRIPT_FLAGS.length + 1)).toEqual(['gridlock', '--debug', '--clean']);
+  });
+
+  /**
+   * Under Node 23 the build refuses before its script runs, naming the range, rather than failing inside
+   * the script. The refusal comes before a face's record is touched, so the record of the last passing
+   * build is still there to decide whether the next one starts clean.
+   */
+  test("refuses a Node outside the framework's range before touching the build record", () => {
+    const record = JSON.stringify({ gridlock: { keys: 'k', lock: 'l', framework: COMMIT } });
+    const root = makeTree({
+      ...currentUnit('mosaic'),
+      'watchfaces/mosaic/paf/package.json': JSON.stringify({ engines: { node: '^22.18.0 || >=24.2.0' }, paf: { build: { script: 'tools/build.ts' } } }),
+      'watchfaces/mosaic/core/.gitkeep': '',
+      'watchfaces/mosaic/gridlock/config/pebble.appinfo.json': '{ "name": "gridlock" }',
+      'watchfaces/mosaic/targets/.paf-build.json': record,
+    });
+    const { run, calls } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
+    const { ctx, printed } = makeContext(root, run);
+
+    ctx.node = '23.11.0';
+
+    const result = build(ctx, 'gridlock', []);
+
+    expect(result).toBe(1);
+    expect(calls.filter((call) => call.command === process.execPath)).toEqual([]);
+    expect(printed).toContainEqual(expect.stringMatching(/^watchfaces\/mosaic: paf\/package\.json asks for Node \^22\.18\.0 \|\| >=24\.2\.0, and this is 23\.11\.0\./));
+    expect(fs.readFileSync(path.join(root, 'watchfaces', 'mosaic', 'targets', '.paf-build.json'), 'utf8')).toBe(record);
+  });
+
+  /** A captured build leaves the memory report out of the CI log, and the report posts a blank one. */
+  test('runs the build uncaptured', () => {
+    const root = makeTree({
+      ...currentUnit('mosaic'),
+      'watchfaces/mosaic/core/.gitkeep': '',
+      'watchfaces/mosaic/gridlock/config/pebble.appinfo.json': '{ "name": "gridlock" }',
+    });
+    const { run, calls } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
+    const { ctx } = makeContext(root, run);
+
+    build(ctx, 'gridlock', []);
+
+    expect(calls.find((each) => each.command === process.execPath)?.options.capture).toBeUndefined();
+  });
+
+  /** A plugin's broken key stopped every build in the unit, though a build never runs anything a plugin offers. */
+  test('builds when a listed plugin has a broken key', () => {
+    const root = makeTree({
+      ...currentUnit('mosaic'),
+      'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT, plugins: { dev: {} } }),
+      'watchfaces/mosaic/paf/.paf.json': JSON.stringify({ commit: COMMIT, tag: 'v4.1.0', plugins: ['dev'] }),
+      'watchfaces/mosaic/paf/plugins/dev/package.json': '{ "paf": { "tools": { "shots": {} } } }',
+      'watchfaces/mosaic/core/.gitkeep': '',
+      'watchfaces/mosaic/gridlock/config/pebble.appinfo.json': '{ "name": "gridlock" }',
+    });
+    const { run } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
+    const { ctx } = makeContext(root, run);
+
+    const result = build(ctx, 'gridlock', []);
+
+    expect(result).toBe(0);
+  });
+
+  /** A framework whose core names no build would otherwise run node on nothing and fail with a message about a missing file. */
+  test('says so when the core names no build script', () => {
+    const root = makeTree({
+      ...currentUnit('mosaic'),
+      'watchfaces/mosaic/paf/package.json': '{ "paf": {} }',
+      'watchfaces/mosaic/core/.gitkeep': '',
+      'watchfaces/mosaic/gridlock/config/pebble.appinfo.json': '{ "name": "gridlock" }',
+    });
+    const { run } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
+    const { ctx, printed } = makeContext(root, run);
+
+    const result = build(ctx, 'gridlock', []);
+
+    expect(result).toBe(1);
+    expect(printed).toContain('watchfaces/mosaic: paf/package.json names no build script under its paf key');
   });
 });
 
@@ -219,51 +325,61 @@ describe('runScript', () => {
 
     expect(calls.find((call) => call.command === 'npm')?.args).toEqual(['run', 'gen:clay', '--', 'gridlock']);
   });
-
-  /** paf gen passes a single generator's arguments on the same way, and a typed -- reached it as a face name. */
-  test('passes gen arguments on without a typed --', () => {
-    const root = makeTree({ ...currentUnit('mosaic'), 'watchfaces/mosaic/core/.gitkeep': '', 'watchfaces/mosaic/gridlock/config/pebble.appinfo.json': '{ "name": "gridlock" }' });
-    const { run, calls } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
-    const { ctx } = makeContext(root, run);
-
-    gen(ctx, 'gridlock', 'frame', ['--', '--theme', 'all']);
-
-    expect(calls.find((call) => call.command === 'npm')?.args).toEqual(['run', 'gen:frame', '--', 'gridlock', '--theme', 'all']);
-  });
 });
 
 describe('the build record on a local framework', () => {
-  /** Every edit in the clone forced a clean build, though only the waf helpers and the wscript are read when a build configures. */
+  /** Every edit in the clone forced a clean build, though only the waf helpers and the wscript go untracked by waf. */
   test('stays the same when only framework code changed', () => {
     const root = makeTree({
       'watchfaces/mosaic/paf/.paf.json': JSON.stringify({ commit: COMMIT, local: '/work/pebble-app-framework', hash: 'a' }),
-      'watchfaces/mosaic/paf/py/waf_helpers.py': 'helpers',
+      'watchfaces/mosaic/paf/waf/paf_staging.py': 'helpers',
       'watchfaces/mosaic/paf/c/core/clock.c': 'before the edit',
+      'watchfaces/mosaic/paf/tools/build.ts': 'before the edit',
     });
     const unit = path.join(root, 'watchfaces', 'mosaic');
     const before = configureIdentity(unit);
 
     fs.writeFileSync(path.join(unit, 'paf', 'c', 'core', 'clock.c'), 'after the edit');
+    fs.writeFileSync(path.join(unit, 'paf', 'tools', 'build.ts'), 'after the edit');
 
     const result = configureIdentity(unit);
 
     expect(result).toBe(before);
   });
 
-  /** The waf helpers are read at configure time, so an edit there has to reconfigure or the build keeps the old ones. */
+  /** waf does not track the helpers' code, so an edit there has to start clean or the build keeps what the old ones made. */
   test('changes when a waf helper changed', () => {
     const root = makeTree({
       'watchfaces/mosaic/paf/.paf.json': JSON.stringify({ commit: COMMIT, local: '/work/pebble-app-framework', hash: 'a' }),
-      'watchfaces/mosaic/paf/py/waf_helpers.py': 'helpers',
+      'watchfaces/mosaic/paf/waf/paf_staging.py': 'helpers',
     });
     const unit = path.join(root, 'watchfaces', 'mosaic');
     const before = configureIdentity(unit);
 
-    fs.writeFileSync(path.join(unit, 'paf', 'py', 'waf_helpers.py'), 'edited helpers');
+    fs.writeFileSync(path.join(unit, 'paf', 'waf', 'paf_staging.py'), 'edited helpers');
 
     const result = configureIdentity(unit);
 
     expect(result).not.toBe(before);
+  });
+
+  /** Every build writes bytecode for the waf helpers it imports, and read as an edit it made each build after the first start clean. */
+  test('stays the same when a build writes the helpers\' bytecode', () => {
+    const root = makeTree({
+      'watchfaces/mosaic/paf/.paf.json': JSON.stringify({ commit: COMMIT, local: '/work/pebble-app-framework', hash: 'a' }),
+      'watchfaces/mosaic/paf/waf/paf_staging.py': 'helpers',
+    });
+    const unit = path.join(root, 'watchfaces', 'mosaic');
+    const before = configureIdentity(unit);
+
+    // Python 3 writes into __pycache__, and Python 2 beside the source
+    fs.mkdirSync(path.join(unit, 'paf', 'waf', '__pycache__'));
+    fs.writeFileSync(path.join(unit, 'paf', 'waf', '__pycache__', 'paf_staging.cpython-311.pyc'), 'bytecode');
+    fs.writeFileSync(path.join(unit, 'paf', 'waf', 'paf_staging.pyc'), 'bytecode');
+
+    const result = configureIdentity(unit);
+
+    expect(result).toBe(before);
   });
 });
 
@@ -275,20 +391,20 @@ describe('fetching once per command', () => {
     const { run, calls } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${'b'.repeat(40)}\n` } : undefined));
     const { ctx } = makeContext(root, run);
 
-    check(ctx, 'test', undefined);
+    unitCheck(ctx, 'test', undefined);
 
     expect(calls.filter((call) => call.args.includes('fetch'))).toHaveLength(1);
   });
 });
 
-describe('check', () => {
+describe('unitCheck', () => {
   /** One unit that cannot be readied stopped the run, so the units after it were never tested and their failures never seen. */
   test('runs every unit when one cannot be readied', () => {
     const root = makeTree({ 'watchfaces/alpha/paf.config.json': '{}', ...currentUnit('beta') });
     const { run, calls } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
     const { ctx, printed } = makeContext(root, run);
 
-    const result = check(ctx, 'test', undefined);
+    const result = unitCheck(ctx, 'test', undefined);
 
     expect(result).toBe(1);
     expect(calls.filter((call) => call.command === 'npm').map((call) => call.options.cwd)).toEqual([path.join(root, 'watchfaces', 'beta')]);
