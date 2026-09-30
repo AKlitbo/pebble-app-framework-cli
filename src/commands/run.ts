@@ -1,16 +1,15 @@
 /**
  * paf build, gen, run, test, lint, and typecheck: the commands that run the framework's own tools
- * inside a unit, against that unit's lib/.
+ * inside a unit, against that unit's paf/.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { mirrorOf, resolveRef, updateMirror } from '../framework/mirror.ts';
-import { readPin } from '../repo/pin.ts';
 import { allFaces, findFace, findUnit, APPINFO_REL, type Located, type Unit } from '../repo/units.ts';
 import type { Context } from '../shared/context.ts';
 import { lockHash } from '../unit/install.ts';
-import { configureIdentity, readStamp } from '../unit/lib.ts';
-import { syncUnit, unitsOf } from './sync.ts';
+import { configureIdentity, unitFramework } from '../unit/framework.ts';
+import { checkUnit, syncUnit, unitsOf } from './sync.ts';
 import { messageOf } from '../shared/errors.ts';
 import { sha256 } from '../shared/hash.ts';
 
@@ -18,7 +17,7 @@ import { sha256 } from '../shared/hash.ts';
 const fetched = new Set<string>();
 
 /**
- * Makes sure a unit's lib/ and node_modules match its pin before running anything in it. The mirror is
+ * Makes sure a unit's paf/ and node_modules match its pin before running anything in it. The mirror is
  * only fetched when there is none yet, or it lacks the pinned tag or has it at another commit, such as
  * after a teammate pinned and pushed, so a build works offline once a sync has run.
  *
@@ -26,10 +25,17 @@ const fetched = new Set<string>();
  * @param unit The unit.
  */
 export function ready(ctx: Context, unit: Unit): void {
-  // a local lib/ comes from its clone, so a build on it works offline and whatever the tag does
-  if (!readStamp(unit.dir)?.local) {
+  // a pin this paf cannot fill stops here, before the mirror is asked
+  const read = unitFramework(unit.dir);
+
+  // so does a unit the sync would refuse, since offline a fetch error would come first and hide what
+  // to fix
+  checkUnit(ctx, unit, { locked: false, force: false });
+
+  // a local paf/ comes from its clone, so a build on it works offline and whatever the tag does
+  if (!read.local) {
     const mirror = mirrorOf(ctx);
-    const pin = readPin(unit.dir);
+    const pin = read.config;
     const commit = resolveRef(ctx.run, mirror, pin.framework);
 
     // a commit other than the recorded one is usually a mirror fetched before a teammate took a moved
@@ -42,7 +48,7 @@ export function ready(ctx: Context, unit: Unit): void {
     }
   }
 
-  syncUnit(ctx, unit, { locked: false, force: false });
+  syncUnit(ctx, unit, { locked: false, force: false }, read);
 }
 
 /** Readies a unit and says whether it could be, printing why not, so a run over many units carries on past it. */
@@ -69,7 +75,7 @@ export type BuildInputs = {
  * The SDK only reads message keys at configure time, so a new key fails an incremental build on an
  * undeclared MESSAGE_KEY_ name. The bundle step does not track node_modules, so a changed dependency
  * ships the old library in a build that reports success. The waf helpers and the wscript come from
- * lib/, and a build only reads them at configure time, so a different framework there starts clean
+ * paf/, and a build only reads them at configure time, so a different framework there starts clean
  * too. What a build was made from is only recorded
  * when it passes, and a failed one leaves its build folder behind, so with no record the build starts
  * clean too.
@@ -92,13 +98,13 @@ export function cleanReason(last: BuildInputs | undefined, now: BuildInputs): st
   }
 
   if (last.framework !== now.framework) {
-    return 'the framework in lib/ changed since the last build here';
+    return 'the framework in paf/ changed since the last build here';
   }
 
   return null;
 }
 
-/** What a face is built from now: its message keys, the unit's lock, and what its lib/ holds. */
+/** What a face is built from now: its message keys, the unit's lock, and what its paf/ holds. */
 function inputsOf(unit: Unit, located: Located): BuildInputs {
   const appinfo = JSON.parse(fs.readFileSync(path.join(unit.dir, located.face.rel, APPINFO_REL), 'utf8'));
   const keys = sha256(JSON.stringify(appinfo.messageKeys ?? []));

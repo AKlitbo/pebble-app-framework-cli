@@ -1,10 +1,10 @@
 /**
  * Finding the units in a face repo, and the faces in each.
  *
- * A unit is a folder with a paf.json: the repo root, for a repo that is one face or one family, or a
- * folder straight under watchfaces/ or watchapps/, for a family or a face of its own. The two folders
- * only sort faces from apps, and a unit in either is laid out the same. Each one keeps its own framework in lib/, its
- * own package.json, and its own node_modules, so it works like a small repo.
+ * A unit is a folder with a paf.config.json: the repo root, for a repo that is one face or one family,
+ * or a folder straight under watchfaces/ or watchapps/, for a family or a face of its own. The two
+ * folders only sort faces from apps, and a unit in either is laid out the same. Each one keeps its own
+ * copy of the framework, its own package.json, and its own node_modules, so it works like a small repo.
  *
  * Inside a unit a face sits in one of two places. A unit that is a face has its appinfo at its own
  * root. A unit that is a family has a core/ and one folder per face beside it.
@@ -12,6 +12,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { messageOf } from '../shared/errors.ts';
+import { inSentence } from '../shared/words.ts';
+import { CONFIG_FILE } from '../unit/config.ts';
+
+/** The unit file paf 1.0.0 reads, which a unit moving to this paf renames by hand. */
+const OLD_CONFIG_FILE = 'paf.json';
 
 /** Where a face keeps its appinfo, relative to the face's own folder. */
 export const APPINFO_REL = path.join('config', 'pebble.appinfo.json');
@@ -37,18 +42,25 @@ export type Face = {
  * Every unit in a repo, the root first and then the folders under watchfaces/ and watchapps/ by name.
  *
  * Commands take a unit by its folder's name, so two units with one name, one in each folder, are
- * refused rather than leaving a pin or a sync to pick one of them.
+ * refused rather than leaving a pin or a sync to pick one of them. A paf.json anywhere a unit can sit
+ * stops every command and names each one, since a repo half on paf 1.0.0's file would sync some units
+ * and not others. A folder holding both files is named too, so a half-moved unit is caught.
  *
  * @param root The repo root.
  * @return The units.
  */
 export function findUnits(root: string): Unit[] {
   const units: Unit[] = [];
+  const unmoved: string[] = [];
+  let clash: string | null = null;
+  const rootName = path.basename(path.resolve(root));
 
-  if (fs.existsSync(path.join(root, 'paf.json'))) {
-    const name = path.basename(path.resolve(root));
+  if (fs.existsSync(path.join(root, OLD_CONFIG_FILE))) {
+    unmoved.push(rootName);
+  }
 
-    units.push({ dir: root, rel: '.', name, where: name });
+  if (fs.existsSync(path.join(root, CONFIG_FILE))) {
+    units.push({ dir: root, rel: '.', name: rootName, where: rootName });
   }
 
   for (const folder of ['watchfaces', 'watchapps']) {
@@ -56,19 +68,33 @@ export function findUnits(root: string): Unit[] {
     const entries = fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }) : [];
 
     for (const entry of entries.filter((item) => item.isDirectory()).sort((first, second) => first.name.localeCompare(second.name))) {
-      if (!fs.existsSync(path.join(dir, entry.name, 'paf.json'))) {
+      const rel = `${folder}/${entry.name}`;
+
+      if (fs.existsSync(path.join(dir, entry.name, OLD_CONFIG_FILE))) {
+        unmoved.push(rel);
+      }
+
+      if (!fs.existsSync(path.join(dir, entry.name, CONFIG_FILE))) {
         continue;
       }
 
-      const rel = `${folder}/${entry.name}`;
-      const clash = units.find((unit) => unit.name === entry.name);
+      const other = units.find((unit) => unit.name === entry.name);
 
-      if (clash) {
-        throw new Error(`two units are named ${entry.name}, at ${clash.where} and ${rel}. Rename one of the folders`);
+      // a clash is only reported once the walk is done, so a leftover paf.json is named first
+      if (other && !clash) {
+        clash = `two units are named ${entry.name}, at ${other.where} and ${rel}. Rename one of the folders`;
       }
 
       units.push({ dir: path.join(dir, entry.name), rel, name: entry.name, where: rel });
     }
+  }
+
+  if (unmoved.length) {
+    throw new Error(`${inSentence(unmoved)} still ${unmoved.length === 1 ? 'has' : 'have'} a paf.json, which paf 1.0.0 reads. This paf reads paf.config.json. Move each unit by hand, then delete its paf.json`);
+  }
+
+  if (clash) {
+    throw new Error(clash);
   }
 
   return units;

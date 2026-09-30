@@ -2,9 +2,10 @@
  * paf pin: moving one unit to another framework tag, with the changelog between the two shown first.
  */
 import { breakingEntries, sectionsBetween } from '../framework/changelog.ts';
-import { listTags, mirrorOf, resolveRef, showFile, updateMirror } from '../framework/mirror.ts';
-import { compareTags, isVersionTag, newestTag } from '../framework/tags.ts';
-import { readPinIfSet, writePin } from '../repo/pin.ts';
+import { listFolders, listTags, mirrorOf, resolveRef, showFile, updateMirror } from '../framework/mirror.ts';
+import { PLUGINS_DIR, SHIP_ROOT, shipPathspecs } from '../framework/ship.ts';
+import { compareTags, isVersionTag } from '../framework/tags.ts';
+import { FRAMEWORK_MAJOR, fillableTags, latestTag, readConfigIfSet, readPlugins, unfillable, writePin } from '../unit/config.ts';
 import { findUnit, unitFaces } from '../repo/units.ts';
 import type { Context } from '../shared/context.ts';
 import { checkUnit, short, syncUnit, unitsOf } from './sync.ts';
@@ -31,33 +32,55 @@ export function pin(ctx: Context, target: string | undefined, wanted: string | u
   updateMirror(ctx.run, mirror, ctx.repo);
 
   const tags = listTags(ctx.run, mirror);
-  const tag = wanted === 'latest' ? newestTag(tags) : wanted;
-  // a pin has to be a version tag, since the changelog it prints, latest, and the tag order all read it as one
-  const commit = tag && isVersionTag(tag) ? resolveRef(ctx.run, mirror, tag) : null;
+  const tag = wanted === 'latest' ? latestTag(tags) : wanted;
 
-  if (!tag || !commit) {
-    const recent = tags.filter(isVersionTag).sort(compareTags).reverse().slice(0, 5).join(', ') || 'none';
-
-    throw new Error(`the framework has no version tag ${wanted}. Recent tags: ${recent}`);
+  if (!tag) {
+    throw new Error(`the framework has no framework ${FRAMEWORK_MAJOR} tag for latest yet`);
   }
 
-  // a unit whose paf.json names no framework yet is taking its first pin
-  const old = readPinIfSet(unit.dir);
+  // the hint only offers tags this paf can pin
+  const recent = fillableTags(tags).sort(compareTags).reverse().slice(0, 5).join(', ') || 'none yet';
+  // a pin has to be a framework 4 version tag, since the changelog it prints, latest, and the tag order
+  // all read it as one. it is checked before the mirror is asked for its commit, and before anything is
+  // printed or written
+  const why = unfillable(tag);
 
-  // latest is the newest release, and a unit already past it, such as one on a newer candidate, stays
-  // rather than moving back to an older framework
-  if (old && wanted === 'latest' && isVersionTag(old.framework) && compareTags(tag, old.framework) < 0) {
-    ctx.print(`${unit.name} is on ${old.framework}, which is newer than the latest release ${tag}, so it stays`);
+  if (why) {
+    throw new Error(`cannot pin ${why}. This paf pins framework ${FRAMEWORK_MAJOR} tags. Recent ones: ${recent}`);
+  }
+
+  const commit = resolveRef(ctx.run, mirror, tag);
+
+  if (!commit) {
+    throw new Error(`the framework has no tag ${tag}. Recent framework ${FRAMEWORK_MAJOR} tags: ${recent}`);
+  }
+
+  // a unit whose paf.config.json names no framework yet is taking its first pin
+  const old = readConfigIfSet(unit.dir);
+
+  // a unit already past latest, such as one on a newer candidate, stays rather than moving back to an
+  // older framework. one past it on a framework this paf cannot fill, or on a tag this mirror lacks, such
+  // as a candidate cut in a local clone, moves back to latest instead, since staying would leave it on a
+  // pin the sync straight after refuses
+  const stays = old !== null && wanted === 'latest' && unfillable(old.framework) === null && compareTags(tag, old.framework) < 0;
+
+  if (old && stays && resolveRef(ctx.run, mirror, old.framework)) {
+    ctx.print(`${unit.name} is on ${old.framework}, which is newer than latest, ${tag}, so it stays`);
     syncUnit(ctx, unit, { locked: false, force: false });
     return 0;
   }
 
-  // the pin is only written once the sync can go ahead, so a refusal leaves paf.json and lib/ agreeing.
-  // a unit on a local framework moves onto the tag with it, since a pin says which framework lib/ holds
+  // the tag has to have every plugin the unit lists, checked before anything is printed or written, since
+  // the sync after the pin would refuse it with paf.config.json already naming the tag
+  shipPathspecs(readPlugins(unit.dir), listFolders(ctx.run, mirror, commit, PLUGINS_DIR), tag);
+
+  // the pin is only written once the sync can go ahead, so a refusal leaves paf.config.json and paf/
+  // agreeing. a unit on a local framework moves onto the tag with it, since a pin says which framework
+  // paf/ holds
   checkUnit(ctx, unit, { locked: false, force: false });
 
   if (old && old.framework === tag) {
-    // a unit already on the tag still syncs, so a lib/ that is missing or behind gets filled
+    // a unit already on the tag still syncs, so a paf/ that is missing or behind gets filled
     if (old.commit === commit) {
       ctx.print(`${unit.name} is already on ${tag}`);
       syncUnit(ctx, unit, { locked: false, force: false, repin: true });
@@ -66,9 +89,10 @@ export function pin(ctx: Context, target: string | undefined, wanted: string | u
 
     ctx.print(`${tag} moved from ${old.commit ? short(old.commit) : 'an unrecorded commit'} to ${short(commit)}`);
   } else {
-    const back = old !== null && compareTags(tag, old.framework) < 0;
+    // only a version tag can be newer, so a move off a pin that is not one reads as a move forward
+    const back = old !== null && isVersionTag(old.framework) && compareTags(tag, old.framework) < 0;
     const newer = back && old ? old.framework : tag;
-    const sections = sectionsBetween(showFile(ctx.run, mirror, newer, 'CHANGELOG.md') ?? '', old?.framework ?? null, tag);
+    const sections = sectionsBetween(showFile(ctx.run, mirror, newer, `${SHIP_ROOT}/CHANGELOG.md`) ?? '', old?.framework ?? null, tag);
     const breaking = breakingEntries(sections);
     const entries = sections.split('\n').filter((line) => line.startsWith('- ')).length;
 
@@ -82,10 +106,10 @@ export function pin(ctx: Context, target: string | undefined, wanted: string | u
       }
     }
 
-    // moving back, the entries being left are in the lib/ there now, which the move replaces
+    // moving back, the entries being left are in the paf/ there now, which the move replaces
     ctx.print(back
-      ? `${entries - breaking.length} other changelog entries being left behind. The full list is in lib/CHANGELOG.md until the pin moves`
-      : `${entries - breaking.length} other changelog entries. The full list is in lib/CHANGELOG.md once the pin moves`);
+      ? `${entries - breaking.length} other changelog entries being left behind. The full list is in paf/CHANGELOG.md until the pin moves`
+      : `${entries - breaking.length} other changelog entries. The full list is in paf/CHANGELOG.md once the pin moves`);
 
     // the face names are only for the hint, so an appinfo that cannot be read leaves the hint out
     // rather than stopping the pin after its changelog has printed

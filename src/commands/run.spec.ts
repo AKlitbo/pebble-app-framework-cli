@@ -8,26 +8,35 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { fakeRunner, makeContext, makeTree } from '../testing/tree.ts';
-import { configureIdentity } from '../unit/lib.ts';
+import { COMMIT, currentUnit, fakeRunner, makeContext, makeTree } from '../testing/tree.ts';
+import { configureIdentity } from '../unit/framework.ts';
 import { build, check, cleanReason, gen, genAllSteps, ready, runScript } from './run.ts';
 
-const COMMIT = 'a'.repeat(40);
+describe('ready', () => {
+  /** Offline, a build on a unit still on framework 3 showed a git fetch error rather than how to move it. */
+  test('refuses a framework 3 pin before it asks the mirror', () => {
+    const root = makeTree({ 'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v3.0.0', commit: COMMIT }) });
+    const { run, calls } = fakeRunner();
+    const { ctx } = makeContext(root, run);
 
-/** A unit pinned to v3.0.0 whose lib/ and node_modules are both current, so readying it runs nothing. */
-function currentUnit(name: string): Record<string, string> {
-  return {
-    [`watchfaces/${name}/paf.json`]: JSON.stringify({ framework: 'v3.0.0', commit: COMMIT }),
-    [`watchfaces/${name}/package.json`]: '{ "workspaces": ["lib"] }',
-    [`watchfaces/${name}/lib/.paf-lib.json`]: JSON.stringify({ commit: COMMIT, tag: 'v3.0.0' }),
-    [`watchfaces/${name}/package-lock.json`]: '{}',
-    [`watchfaces/${name}/node_modules/.paf-install.json`]: JSON.stringify({
-      platform: 'linux',
-      lock: '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
-      framework: '',
-    }),
-  };
-}
+    const result = () => ready(ctx, { dir: path.join(root, 'watchfaces', 'mosaic'), rel: 'watchfaces/mosaic', name: 'mosaic', where: 'watchfaces/mosaic' });
+
+    expect(result).toThrow(/pins v3\.0\.0, which is framework 3/);
+    expect(calls).toEqual([]);
+  });
+
+  /** Offline, a build on a unit with no package.json showed a git fetch error rather than what the unit lacks. */
+  test('refuses a unit the sync would refuse before it asks the mirror', () => {
+    const root = makeTree({ 'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v4.1.0' }) });
+    const { run, calls } = fakeRunner(() => ({ code: 1 }));
+    const { ctx } = makeContext(root, run);
+
+    const result = () => ready(ctx, { dir: path.join(root, 'watchfaces', 'mosaic'), rel: 'watchfaces/mosaic', name: 'mosaic', where: 'watchfaces/mosaic' });
+
+    expect(result).toThrow(/has no package\.json, so npm would install into the folder above it/);
+    expect(calls).toEqual([]);
+  });
+});
 
 describe('cleanReason', () => {
   /** The SDK reads message keys only when it configures, so a new key fails an incremental build. */
@@ -44,8 +53,8 @@ describe('cleanReason', () => {
     expect(result).toMatch(/dependencies/);
   });
 
-  /** The waf helpers and the wscript come from lib/ and are read at configure time, so a new framework has to reconfigure. */
-  test('starts clean when the framework in lib/ changed', () => {
+  /** The waf helpers and the wscript come from paf/ and are read at configure time, so a new framework has to reconfigure. */
+  test('starts clean when the framework in paf/ changed', () => {
     const result = cleanReason({ keys: 'same', lock: 'same', framework: 'v3' }, { keys: 'same', lock: 'same', framework: 'local' });
 
     expect(result).toMatch(/framework/);
@@ -121,9 +130,9 @@ describe('ready', () => {
     expect(calls.filter((call) => call.args.includes('fetch'))).toHaveLength(1);
   });
 
-  /** With no commit recorded, a build wrote whatever commit a stale mirror held for the tag into paf.json. */
+  /** With no commit recorded, a build wrote whatever commit a stale mirror held for the tag into paf.config.json. */
   test('fetches the mirror before recording a commit for the first time', () => {
-    const root = makeTree({ ...currentUnit('mosaic'), 'watchfaces/mosaic/paf.json': JSON.stringify({ framework: 'v3.0.0' }) });
+    const root = makeTree({ ...currentUnit('mosaic'), 'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v4.1.0' }) });
     const { run, calls } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
     const { ctx } = makeContext(root, run);
 
@@ -133,7 +142,7 @@ describe('ready', () => {
   });
 
   /** A teammate took a moved tag, and every build here said the tag had moved when only the mirror was behind. */
-  test('fetches the mirror when it has the tag at another commit than paf.json records', () => {
+  test('fetches the mirror when it has the tag at another commit than paf.config.json records', () => {
     const root = makeTree(currentUnit('mosaic'));
     let fetched = false;
     const { run, calls } = fakeRunner((command, args) => {
@@ -227,14 +236,14 @@ describe('the build record on a local framework', () => {
   /** Every edit in the clone forced a clean build, though only the waf helpers and the wscript are read when a build configures. */
   test('stays the same when only framework code changed', () => {
     const root = makeTree({
-      'watchfaces/mosaic/lib/.paf-lib.json': JSON.stringify({ commit: COMMIT, local: '/work/pebble-app-framework', hash: 'a' }),
-      'watchfaces/mosaic/lib/py/waf_helpers.py': 'helpers',
-      'watchfaces/mosaic/lib/c/core/clock.c': 'before the edit',
+      'watchfaces/mosaic/paf/.paf.json': JSON.stringify({ commit: COMMIT, local: '/work/pebble-app-framework', hash: 'a' }),
+      'watchfaces/mosaic/paf/py/waf_helpers.py': 'helpers',
+      'watchfaces/mosaic/paf/c/core/clock.c': 'before the edit',
     });
     const unit = path.join(root, 'watchfaces', 'mosaic');
     const before = configureIdentity(unit);
 
-    fs.writeFileSync(path.join(unit, 'lib', 'c', 'core', 'clock.c'), 'after the edit');
+    fs.writeFileSync(path.join(unit, 'paf', 'c', 'core', 'clock.c'), 'after the edit');
 
     const result = configureIdentity(unit);
 
@@ -244,13 +253,13 @@ describe('the build record on a local framework', () => {
   /** The waf helpers are read at configure time, so an edit there has to reconfigure or the build keeps the old ones. */
   test('changes when a waf helper changed', () => {
     const root = makeTree({
-      'watchfaces/mosaic/lib/.paf-lib.json': JSON.stringify({ commit: COMMIT, local: '/work/pebble-app-framework', hash: 'a' }),
-      'watchfaces/mosaic/lib/py/waf_helpers.py': 'helpers',
+      'watchfaces/mosaic/paf/.paf.json': JSON.stringify({ commit: COMMIT, local: '/work/pebble-app-framework', hash: 'a' }),
+      'watchfaces/mosaic/paf/py/waf_helpers.py': 'helpers',
     });
     const unit = path.join(root, 'watchfaces', 'mosaic');
     const before = configureIdentity(unit);
 
-    fs.writeFileSync(path.join(unit, 'lib', 'py', 'waf_helpers.py'), 'edited helpers');
+    fs.writeFileSync(path.join(unit, 'paf', 'py', 'waf_helpers.py'), 'edited helpers');
 
     const result = configureIdentity(unit);
 
@@ -262,7 +271,7 @@ describe('fetching once per command', () => {
   /** A teammate moved several families to a new tag, and a check over them fetched the mirror once per unit. */
   test('fetches the mirror once for several units that need it', () => {
     const root = makeTree({ ...currentUnit('alpha'), ...currentUnit('beta') });
-    // the tag has moved upstream, so the mirror still disagrees with each paf.json after the fetch
+    // the tag has moved upstream, so the mirror still disagrees with each paf.config.json after the fetch
     const { run, calls } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${'b'.repeat(40)}\n` } : undefined));
     const { ctx } = makeContext(root, run);
 
@@ -275,7 +284,7 @@ describe('fetching once per command', () => {
 describe('check', () => {
   /** One unit that cannot be readied stopped the run, so the units after it were never tested and their failures never seen. */
   test('runs every unit when one cannot be readied', () => {
-    const root = makeTree({ 'watchfaces/alpha/paf.json': '{}', ...currentUnit('beta') });
+    const root = makeTree({ 'watchfaces/alpha/paf.config.json': '{}', ...currentUnit('beta') });
     const { run, calls } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
     const { ctx, printed } = makeContext(root, run);
 

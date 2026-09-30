@@ -29,21 +29,69 @@ describe('sdkVerdict', () => {
 describe('workflowActionTags', () => {
   /** doctor compares these against the newest unit, and an action older than a unit may not know its layout. */
   test('reads the tag each framework action is loaded at', () => {
-    const result = workflowActionTags('uses: AKlitbo/pebble-app-framework/.github/actions/setup-pebble@v3.0.0\nuses: actions/checkout@v7');
+    const result = workflowActionTags('uses: AKlitbo/pebble-app-framework/.github/actions/setup-pebble@v4.1.0\nuses: actions/checkout@v7');
 
-    expect(result).toEqual(['v3.0.0']);
+    expect(result).toEqual(['v4.1.0']);
   });
 });
 
 describe('unitState', () => {
-  /** One unit with a broken paf.json stopped paf status before its table, so no other unit was shown either. */
+  /** One unit with a broken paf.config.json stopped paf status before its table, so no other unit was shown either. */
   test('reports a unit it cannot read as a problem rather than throwing', () => {
-    const root = makeTree({ 'watchfaces/mosaic/paf.json': '{ not json' });
+    const root = makeTree({ 'watchfaces/mosaic/paf.config.json': '{ not json' });
     const { ctx } = makeContext(root, fakeRunner().run);
 
     const result = unitState(ctx, { dir: path.join(root, 'watchfaces', 'mosaic'), rel: 'watchfaces/mosaic', name: 'mosaic', where: 'watchfaces/mosaic' });
 
-    expect(result).toMatch(/^problem: .*paf\.json could not be read/);
+    expect(result).toMatch(/^problem: .*paf\.config\.json could not be read/);
+  });
+
+  /** A plugin added to paf.config.json showed as ready, so nothing said a sync was needed before its paf gen failed. */
+  test('calls a unit whose paf/ holds other plugins than it lists in need of a sync', () => {
+    const root = makeTree({
+      'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: 'a'.repeat(40), plugins: { icons: {}, thumbnails: {} } }),
+      'watchfaces/mosaic/paf/.paf.json': JSON.stringify({ commit: 'a'.repeat(40), tag: 'v4.1.0', plugins: ['icons'] }),
+    });
+    const { ctx } = makeContext(root, fakeRunner().run);
+
+    const result = unitState(ctx, { dir: path.join(root, 'watchfaces', 'mosaic'), rel: 'watchfaces/mosaic', name: 'mosaic', where: 'watchfaces/mosaic' });
+
+    expect(result).toBe('needs paf sync');
+  });
+
+  /** sync and build take a unit on a local framework whatever it pins, so status calling it a problem sent people chasing nothing. */
+  test('shows a unit on a local framework as local, whatever it pins', () => {
+    const root = makeTree({
+      'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v3.0.0', commit: 'a'.repeat(40) }),
+      'watchfaces/mosaic/paf/.paf.json': JSON.stringify({ commit: 'a'.repeat(40), local: '/work/pebble-app-framework', hash: 'x' }),
+    });
+    const { ctx } = makeContext(root, fakeRunner().run);
+
+    const result = unitState(ctx, { dir: path.join(root, 'watchfaces', 'mosaic'), rel: 'watchfaces/mosaic', name: 'mosaic', where: 'watchfaces/mosaic' });
+
+    expect(result).toBe('local, /work/pebble-app-framework');
+  });
+});
+
+describe('status', () => {
+  /** With only framework 3 releases out, LATEST offered one that paf pin refuses, beside a unit on a framework 4 candidate. */
+  test('shows the latest framework 4 tag, not a framework 3 release', () => {
+    const root = makeTree({ 'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v4.1.0-rc.27', commit: 'a'.repeat(40) }) });
+    const { ctx, printed } = makeContext(root, fakeRunner((command, args) => (args.includes('tag') ? { stdout: 'v3.1.0\nv4.1.0-rc.27\n' } : undefined)).run);
+
+    status(ctx);
+
+    expect(printed[1]).toMatch(/v4\.1\.0-rc\.27\s+v4\.1\.0-rc\.27/);
+  });
+
+  /** A unit renamed from paf.json showed its tag as ?, hiding the pin it had to move off. */
+  test('shows a framework 3 pin as its tag and the unit as a problem', () => {
+    const root = makeTree({ 'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v3.0.0', commit: 'a'.repeat(40) }) });
+    const { ctx, printed } = makeContext(root, fakeRunner().run);
+
+    status(ctx);
+
+    expect(printed[1]).toMatch(/v3\.0\.0 .*problem: mosaic\/paf\.config\.json pins v3\.0\.0, which is framework 3/);
   });
 });
 
@@ -51,8 +99,8 @@ describe('doctor', () => {
   /** A unit on a local framework made doctor fail for as long as the paf use local loop was in use, though nothing was wrong. */
   test('notes a unit on a local framework rather than calling it a problem', () => {
     const root = makeTree({
-      'watchfaces/mosaic/paf.json': JSON.stringify({ framework: 'v3.0.0', commit: 'a'.repeat(40) }),
-      'watchfaces/mosaic/lib/.paf-lib.json': JSON.stringify({ commit: 'a'.repeat(40), local: '/work/pebble-app-framework', hash: 'x' }),
+      'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: 'a'.repeat(40) }),
+      'watchfaces/mosaic/paf/.paf.json': JSON.stringify({ commit: 'a'.repeat(40), local: '/work/pebble-app-framework', hash: 'x' }),
     });
     // git check-ignore prints back each folder that is ignored, and here all of them are
     const { ctx, printed } = makeContext(root, fakeRunner((command, args) => {
@@ -70,7 +118,7 @@ describe('doctor', () => {
 
   /** One check-ignore call serves every unit, so each folder has to be matched in what git prints back. */
   test('names the one folder git does not report as ignored', () => {
-    const root = makeTree({ 'watchfaces/mosaic/paf.json': JSON.stringify({ framework: 'v3.0.0', commit: 'a'.repeat(40) }) });
+    const root = makeTree({ 'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: 'a'.repeat(40) }) });
     const { ctx, printed } = makeContext(root, fakeRunner((command, args) => {
       if (command === 'pebble') {
         return { code: 1 };
@@ -87,28 +135,28 @@ describe('doctor', () => {
   });
 
   /** A unit pulled to a new pin before a sync still holds the old framework, and its toolchain was shown as the new tag's. */
-  test('shows each toolchain under the tag its lib/ holds', () => {
+  test('shows each toolchain under the tag its paf/ holds', () => {
     const toolchain = (sdk: string) => JSON.stringify({ format: 1, sdk, pebbleTool: '5.0.40', node: 24 });
     const root = makeTree({
-      'watchfaces/alpha/paf.json': JSON.stringify({ framework: 'v3.1.0', commit: 'a'.repeat(40) }),
-      'watchfaces/alpha/lib/.paf-lib.json': JSON.stringify({ commit: 'a'.repeat(40), tag: 'v3.1.0' }),
-      'watchfaces/alpha/lib/project/toolchain.json': toolchain('4.40.0'),
-      'watchfaces/beta/paf.json': JSON.stringify({ framework: 'v3.1.0', commit: 'a'.repeat(40) }),
-      'watchfaces/beta/lib/.paf-lib.json': JSON.stringify({ commit: 'b'.repeat(40), tag: 'v3.0.0' }),
-      'watchfaces/beta/lib/project/toolchain.json': toolchain('4.33.1'),
+      'watchfaces/alpha/paf.config.json': JSON.stringify({ framework: 'v4.2.0', commit: 'a'.repeat(40) }),
+      'watchfaces/alpha/paf/.paf.json': JSON.stringify({ commit: 'a'.repeat(40), tag: 'v4.2.0' }),
+      'watchfaces/alpha/paf/toolchain.json': toolchain('4.40.0'),
+      'watchfaces/beta/paf.config.json': JSON.stringify({ framework: 'v4.2.0', commit: 'a'.repeat(40) }),
+      'watchfaces/beta/paf/.paf.json': JSON.stringify({ commit: 'b'.repeat(40), tag: 'v4.1.0' }),
+      'watchfaces/beta/paf/toolchain.json': toolchain('4.33.1'),
     });
     const { ctx, printed } = makeContext(root, fakeRunner((command) => (command === 'pebble' ? { code: 1 } : undefined)).run);
 
     status(ctx);
 
-    expect(printed.at(-1)).toBe('toolchain: no pebble here. v3.1.0 was built with 4.40.0, v3.0.0 was built with 4.33.1');
+    expect(printed.at(-1)).toBe('toolchain: no pebble here. v4.2.0 was built with 4.40.0, v4.1.0 was built with 4.33.1');
   });
 
   /** A toolchain.json paf cannot read went unreported whenever pebble was not on the PATH, so doctor passed a broken unit. */
   test('reports an unreadable toolchain without a pebble to compare it with', () => {
     const root = makeTree({
-      'watchfaces/mosaic/paf.json': JSON.stringify({ framework: 'v3.0.0', commit: 'a'.repeat(40) }),
-      'watchfaces/mosaic/lib/project/toolchain.json': '{ "format": 2 }',
+      'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: 'a'.repeat(40) }),
+      'watchfaces/mosaic/paf/toolchain.json': '{ "format": 2 }',
     });
     const { ctx, printed } = makeContext(root, fakeRunner((command, args) => {
       if (command === 'pebble') {
@@ -124,21 +172,21 @@ describe('doctor', () => {
     expect(printed.some((line) => line.startsWith('problem') && line.includes('toolchain.json'))).toBe(true);
   });
 
-  /** A stopped swap leaves a whole framework copy in lib.paf-old, and a unit that does not ignore it could commit hundreds of files. */
+  /** A stopped swap leaves a whole framework copy in paf.paf-old, and a unit that does not ignore it could commit hundreds of files. */
   test('names a unit whose swap folders are not gitignored', () => {
-    const root = makeTree({ 'watchfaces/mosaic/paf.json': JSON.stringify({ framework: 'v3.0.0', commit: 'a'.repeat(40) }) });
+    const root = makeTree({ 'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: 'a'.repeat(40) }) });
     const { ctx, printed } = makeContext(root, fakeRunner((command, args) => {
       if (command === 'pebble') {
         return { code: 1 };
       }
 
-      return args.includes('check-ignore') ? { stdout: args.slice(args.indexOf('check-ignore') + 1).filter((folder) => !folder.includes('lib.paf-')).join('\n') } : undefined;
+      return args.includes('check-ignore') ? { stdout: args.slice(args.indexOf('check-ignore') + 1).filter((folder) => !folder.includes('paf.paf-')).join('\n') } : undefined;
     }).run);
 
     doctor(ctx);
 
     expect(printed.filter((line) => line.includes('is not gitignored'))).toEqual([
-      'problem  watchfaces/mosaic/lib.paf-*/ is not gitignored, so a framework copy a stopped swap leaves could be committed',
+      'problem  watchfaces/mosaic/paf.paf-*/ is not gitignored, so a framework copy a stopped swap leaves could be committed',
     ]);
   });
 });

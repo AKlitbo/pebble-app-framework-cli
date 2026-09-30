@@ -1,54 +1,37 @@
 /**
- * Specs for turning the framework's files list into git pathspecs.
+ * Specs for the git pathspecs that decide what a unit's paf/ gets from the framework.
  *
- * The list decides everything a unit's lib/ holds. A pathspec that matches nothing stops git restore
- * outright, and a leftover exclude ships the C host specs into every unit.
+ * The pathspecs take the framework's src/ folder and leave out the specs, their fixtures, and each
+ * plugin the unit does not list. A missing exclude ships a plugin, and the packages it installs, into
+ * every unit, and one too many drops a plugin the unit asked for.
  */
 import { describe, expect, test } from 'vitest';
 import { shipPathspecs } from './ship.ts';
 
-const PRESENT = ['package.json', 'build.sh', 'c/core/a.c', 'c/core/a.spec.c', 'ts/pkjs/app.ts'];
+const OFFERED = ['dev', 'frame', 'icons', 'thumbnails'];
 
 describe('shipPathspecs', () => {
-  /** The unit installs the framework as a workspace from its package.json, so it ships whatever the list says. */
-  test('always takes package.json', () => {
-    const result = shipPathspecs(['build.sh'], PRESENT);
+  /** frame brings Playwright with it, so a unit that did not list it still installing it is the bug this guards. */
+  test('leaves out exactly the plugins the unit does not list', () => {
+    const result = shipPathspecs(['icons', 'thumbnails'], OFFERED, 'v4.0.0').filter((spec) => spec.includes('plugins'));
 
-    expect(result).toContain('package.json');
+    expect(result).toEqual([':(exclude,glob)plugins/dev/**', ':(exclude,glob)plugins/frame/**']);
   });
 
-  /** A later framework can list a file an older tag never had, and git refuses a pathspec that matches nothing. */
-  test('drops an entry the commit does not hold', () => {
-    const result = shipPathspecs(['build.sh', 'features.json', 'c/core'], PRESENT);
+  /** The specs and their fixtures never run in a unit, so shipping them only adds files a build has to skip. */
+  test('takes everything in src/ but the specs and fixtures', () => {
+    const result = shipPathspecs([], [], 'v4.0.0');
 
-    expect(result).toEqual(['package.json', 'build.sh', 'c/core']);
+    expect(result).toEqual(['.', ':(exclude,glob)**/*.spec.ts', ':(exclude,glob)**/*.spec.c', ':(exclude,glob)**/fixtures/**']);
   });
 
-  /** The C host specs never run in a face repo, so the list leaves them out with a negated glob. */
-  test('turns a negated entry into an exclude', () => {
-    const result = shipPathspecs(['c/core', '!**/*.spec.c'], PRESENT);
+  /**
+   * git takes an exclude list without the plugin, so the unit would sync clean and then fail on its first
+   * paf gen with nothing saying the plugin was never there.
+   */
+  test('refuses a plugin the framework does not offer, naming the ones it does', () => {
+    const result = () => shipPathspecs(['frames'], OFFERED, 'v4.0.0');
 
-    expect(result).toContain(':(exclude,glob)**/*.spec.c');
-  });
-
-  /** npm reads a glob or a ./ path in the files list, and dropping either quietly left files out of lib/ with nothing saying why. */
-  test('keeps a glob entry and a ./ path that match files', () => {
-    const result = shipPathspecs(['c/**/*.h', './build.sh'], [...PRESENT, 'c/core/clock.h']);
-
-    expect(result).toEqual(['package.json', ':(glob)c/**/*.h', 'build.sh']);
-  });
-
-  /** npm reads /build.sh from the package's own folder, and one written that way never matched a file and was dropped. */
-  test('keeps an entry written from the root', () => {
-    const result = shipPathspecs(['/build.sh'], PRESENT);
-
-    expect(result).toEqual(['package.json', 'build.sh']);
-  });
-
-  /** git ls-files takes a pathspec that matches nothing, so a local clone keeps every entry rather than needing a listing to check first. */
-  test('keeps every entry when there is no file list to check against', () => {
-    const result = shipPathspecs(['build.sh', 'features.json', '!**/*.spec.c'], null);
-
-    expect(result).toEqual(['package.json', 'build.sh', 'features.json', ':(exclude,glob)**/*.spec.c']);
+    expect(result).toThrow('the unit lists the plugin frames, which v4.0.0 does not have. It has dev, frame, icons, and thumbnails');
   });
 });

@@ -23,6 +23,16 @@ export function isVersionTag(tag: string): boolean {
   return parse(tag) !== null;
 }
 
+/**
+ * The major version a tag names, the first of its three numbers.
+ *
+ * @param tag The tag, such as v4.0.0 or v4.0.0-rc.1.
+ * @return The major version, or null for a tag that is not a version.
+ */
+export function majorOf(tag: string): number | null {
+  return parse(tag)?.parts[0] ?? null;
+}
+
 /** Compares two pre-release labels the way semver does, number parts as numbers. */
 function comparePre(first: string, second: string): number {
   const left = first.split('.');

@@ -5,7 +5,7 @@
  * string order puts v3.0.0-rc.9 after v3.0.0-rc.10 and a release candidate after its release.
  */
 import { describe, expect, test } from 'vitest';
-import { compareTags, newestTag, releaseOf } from './tags.ts';
+import { compareTags, majorOf, newestTag, releaseOf } from './tags.ts';
 
 describe('compareTags', () => {
   /** A release is newer than every candidate before it, or latest would move a unit back onto a candidate. */
@@ -20,6 +20,15 @@ describe('compareTags', () => {
     const result = compareTags('v3.0.0-rc.10', 'v3.0.0-rc.9');
 
     expect(result).toBeGreaterThan(0);
+  });
+});
+
+describe('majorOf', () => {
+  /** A candidate read as major 0 would be refused as older than framework 4, so no rc could ever be tried. */
+  test('reads the major of a release candidate', () => {
+    const result = majorOf('v4.0.0-rc.1');
+
+    expect(result).toBe(4);
   });
 });
 

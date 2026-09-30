@@ -4,30 +4,29 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { listTags, mirrorOf } from '../framework/mirror.ts';
-import { compareTags, isVersionTag, newestTag } from '../framework/tags.ts';
+import { compareTags } from '../framework/tags.ts';
 import { compareVersions, parsePebbleVersion, parseToolchain, type Toolchain } from '../framework/toolchain.ts';
-import { readPin } from '../repo/pin.ts';
+import { fillableTags, latestTag, pinnedTag } from '../unit/config.ts';
 import { unitFaces, type Unit } from '../repo/units.ts';
 import type { Context } from '../shared/context.ts';
 import { installState, lockHash, readInstallStamp } from '../unit/install.ts';
 import { messageOf } from '../shared/errors.ts';
-import { frameworkPackageHash, readStamp } from '../unit/lib.ts';
+import { FRAMEWORK_DIR, frameworkPackageHash, holdsPlugins, readStamp, unitFramework } from '../unit/framework.ts';
 import { unitsOf } from './sync.ts';
 
-/** The tag a unit pins, or ? when its paf.json cannot be read, which its state column then explains. */
+/**
+ * The tag a unit pins, or ? when its paf.config.json cannot be read, which its state column then
+ * explains. A pin this paf cannot fill is still shown, since it is the one the unit has to move off.
+ */
 function tagOf(unit: Unit): string {
-  try {
-    return readPin(unit.dir).framework;
-  } catch {
-    return '?';
-  }
+  return pinnedTag(unit.dir) ?? '?';
 }
 
 /**
- * The toolchain each framework in the units' lib/ folders records, keyed by what lib/ holds: the tag
- * it was filled from, or the local clone it was copied from. A unit whose paf.json was pulled to a new
- * tag before a sync still holds the old one, so the stamp says which, not the pin. A unit whose lib/
- * has no toolchain to read is left out.
+ * The toolchain each framework in the units' paf/ folders records, keyed by what paf/ holds: the tag
+ * it was filled from, or the local clone it was copied from. A unit whose paf.config.json was pulled
+ * to a new tag before a sync still holds the old one, so the stamp says which, not the pin. A unit
+ * whose paf/ has no toolchain to read is left out.
  */
 function toolchainsByFramework(units: Unit[], toolchains: Map<Unit, Toolchain | Error | null>): Map<string, { toolchain: Toolchain; units: string[] }> {
   const found = new Map<string, { toolchain: Toolchain; units: string[] }>();
@@ -74,14 +73,17 @@ export function unitState(ctx: Context, unit: Unit): string {
 }
 
 function stateOf(ctx: Context, unit: Unit): string {
-  const pin = readPin(unit.dir);
-  const stamp = readStamp(unit.dir);
+  // a unit on a local framework builds from its clone whatever it pins, the way sync and build treat it.
+  // its file is still read, so a broken one shows here rather than at the next paf pin
+  const read = unitFramework(unit.dir);
 
-  if (stamp?.local) {
-    return `local, ${stamp.local}`;
+  if (read.local) {
+    return `local, ${read.stamp.local}`;
   }
 
-  if (!stamp || !pin.commit || stamp.commit !== pin.commit) {
+  const { stamp, config } = read;
+
+  if (!stamp || !config.commit || stamp.commit !== config.commit || !holdsPlugins(stamp, read.plugins)) {
     return 'needs paf sync';
   }
 
@@ -102,14 +104,14 @@ function table(rows: string[][]): string[] {
   return rows.map((row) => row.map((cell, column) => (column === row.length - 1 ? cell : cell.padEnd(widths[column]))).join('  '));
 }
 
-/** The toolchain a unit's lib/ records, null when lib/ has none, or the error that stopped the read. */
+/** The toolchain a unit's paf/ records, null when paf/ has none, or the error that stopped the read. */
 function toolchainOf(unit: Unit): Toolchain | Error | null {
-  const file = path.join(unit.dir, 'lib', 'project', 'toolchain.json');
+  const file = path.join(unit.dir, FRAMEWORK_DIR, 'toolchain.json');
 
   try {
     return fs.existsSync(file) ? parseToolchain(fs.readFileSync(file, 'utf8')) : null;
   } catch (error) {
-    return new Error(`${unit.rel}/lib/project/toolchain.json: ${messageOf(error)}`);
+    return new Error(`${unit.rel}/${FRAMEWORK_DIR}/toolchain.json: ${messageOf(error)}`);
   }
 }
 
@@ -147,7 +149,8 @@ export function sdkVerdict(active: string, built: string): { word: string; probl
 export function status(ctx: Context): number {
   const units = unitsOf(ctx);
   const known = fs.existsSync(path.join(mirrorOf(ctx), 'HEAD')) ? listTags(ctx.run, mirrorOf(ctx)) : [];
-  const latest = newestTag(known) ?? '?';
+  // the same tag paf pin <unit> latest takes, never a framework 3 release it would refuse
+  const latest = latestTag(known) ?? '?';
   const rows = [['UNIT', 'FACES', 'TAG', 'LATEST', 'STATE']];
 
   for (const unit of units) {
@@ -158,7 +161,7 @@ export function status(ctx: Context): number {
     ctx.print(line);
   }
 
-  ctx.print('LATEST is the newest tag as of the last fetch, and paf sync fetches again.');
+  ctx.print('LATEST is the newest framework 4 tag as of the last fetch, a release when there is one, and paf sync fetches again.');
 
   const pebble = activePebble(ctx);
   const built = [...toolchainsByFramework(units, new Map(units.map((unit) => [unit, toolchainOf(unit)]))).entries()].map(([framework, { toolchain }]) => `${framework} was built with ${toolchain.sdk}`);
@@ -207,16 +210,16 @@ export function doctor(ctx: Context): number {
   // relative to the repo with forward slashes and quoting is turned off. the trailing slash tells git
   // each is a folder, so a pattern matches before paf first makes it
   const folder = (unit: Unit, name: string) => `${unit.rel}/${name}/`;
-  const folders = units.flatMap((unit) => ['lib', 'targets', 'lib.paf-new', 'lib.paf-old'].map((name) => folder(unit, name)));
+  const folders = units.flatMap((unit) => [FRAMEWORK_DIR, 'targets', `${FRAMEWORK_DIR}.paf-new`, `${FRAMEWORK_DIR}.paf-old`].map((name) => folder(unit, name)));
   const ignored = new Set(ctx.run('git', ['-c', 'core.quotePath=false', 'check-ignore', ...folders], { cwd: ctx.root, capture: true }).stdout.split(/\r?\n/).filter(Boolean));
 
   for (const unit of units) {
-    if (!ignored.has(folder(unit, 'lib'))) {
-      say('problem', `${unit.rel}/lib is not gitignored, so the framework copy could be committed`);
+    if (!ignored.has(folder(unit, FRAMEWORK_DIR))) {
+      say('problem', `${unit.rel}/${FRAMEWORK_DIR} is not gitignored, so the framework copy could be committed`);
     }
 
-    if (!ignored.has(folder(unit, 'lib.paf-new')) || !ignored.has(folder(unit, 'lib.paf-old'))) {
-      say('problem', `${unit.rel}/lib.paf-*/ is not gitignored, so a framework copy a stopped swap leaves could be committed`);
+    if (!ignored.has(folder(unit, `${FRAMEWORK_DIR}.paf-new`)) || !ignored.has(folder(unit, `${FRAMEWORK_DIR}.paf-old`))) {
+      say('problem', `${unit.rel}/${FRAMEWORK_DIR}.paf-*/ is not gitignored, so a framework copy a stopped swap leaves could be committed`);
     }
 
     if (!ignored.has(folder(unit, 'targets'))) {
@@ -225,8 +228,8 @@ export function doctor(ctx: Context): number {
 
     // a swap that stopped partway, such as a delete an open file on Windows held up, leaves one of these.
     // it only holds a framework copy and its install, which the next sync fills again
-    for (const left of fs.readdirSync(unit.dir).filter((name) => /^lib\.paf-(new|old)$/.test(name))) {
-      say('problem', `${unit.rel}/${left} is left from a lib/ swap that stopped partway. Delete it, or paf sync ${unit.name} clears it`);
+    for (const left of fs.readdirSync(unit.dir).filter((name) => name === `${FRAMEWORK_DIR}.paf-new` || name === `${FRAMEWORK_DIR}.paf-old`)) {
+      say('problem', `${unit.rel}/${left} is left from a paf/ swap that stopped partway. Delete it, or paf sync ${unit.name} clears it`);
     }
   }
 
@@ -270,7 +273,8 @@ export function doctor(ctx: Context): number {
   }
 
   const workflows = path.join(ctx.root, '.github', 'workflows');
-  const newest = units.map(tagOf).filter(isVersionTag).sort(compareTags).at(-1);
+  // only a tag this paf fills sets which action tag the workflows want, never a leftover framework 3 pin
+  const newest = fillableTags(units.map(tagOf)).sort(compareTags).at(-1);
 
   if (newest && fs.existsSync(workflows)) {
     for (const file of fs.readdirSync(workflows).filter((name) => /\.ya?ml$/.test(name))) {
@@ -281,10 +285,10 @@ export function doctor(ctx: Context): number {
         say('problem', `.github/workflows/${file} loads the framework's actions at ${stale[0]}, older than ${newest}. Move them to @${newest}`);
       }
 
-      // a lib/ paf fills holds only what the framework ships, which leaves out .github/, so no unit's
-      // lib/ has the actions, the repo root's included
-      if (text.includes('./lib/.github/actions/')) {
-        say('problem', `.github/workflows/${file} loads actions from ./lib, which a lib/ paf fills does not have. Load them from AKlitbo/pebble-app-framework at @${newest}`);
+      // a paf/ holds only what the framework ships from its src/, which leaves out .github/, so no
+      // unit's paf/ has the actions, the repo root's included
+      if (text.includes(`./${FRAMEWORK_DIR}/.github/actions/`)) {
+        say('problem', `.github/workflows/${file} loads actions from ./${FRAMEWORK_DIR}, which the framework copy there does not have. Load them from AKlitbo/pebble-app-framework at @${newest}`);
       }
     }
   }

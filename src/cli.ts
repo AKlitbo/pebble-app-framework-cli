@@ -2,7 +2,7 @@
 /**
  * The paf command.
  *
- * Gives each family or face in a repo its own pebble-app-framework version in its own lib/, and runs
+ * Gives each family or face in a repo its own pebble-app-framework version in its own paf/, and runs
  * the framework's build, generators, and checks in place against it.
  */
 import { build, check, gen, runScript } from './commands/run.ts';
@@ -19,11 +19,11 @@ const HELP = `paf: gives each family or face its own pebble-app-framework, and b
 usage: paf <command> [args]
 
   sync [unit] [--locked] [--force]
-                               fill each unit's lib/ from its pinned tag and install its node_modules
-  status                       each unit's faces, tag, the newest tag, and whether it is ready
+                               fill each unit's paf/ from its pinned tag and install its node_modules
+  status                       each unit's faces, tag, the newest framework 4 tag, and whether it is ready
   pin <unit> <tag|latest>
                                move a unit to another tag, showing the changelog between them first
-  use <unit> local [path]      point a unit's lib/ at a local framework clone, builds included
+  use <unit> local [path]      point a unit's paf/ at a local framework clone, builds included
   use <unit> pinned            put it back on its tag
   build <face|all> [--clean]   build a face in its unit (WSL only), clean when message keys or dependencies changed
   gen <face> <kind|all>        run one of the framework's generators for a face, or all it has inputs for
@@ -33,7 +33,7 @@ usage: paf <command> [args]
                                run the check in every unit, or one, against its own framework
   doctor                       check git, node, the pins, the SDK, and the workflows
 
-A unit is a folder with a paf.json: a family or a face of its own under watchfaces/ or watchapps/,
+A unit is a folder with a paf.config.json: a family or a face of its own under watchfaces/ or watchapps/,
 or the repo root for a repo that is one face or one family. PAF_HOME moves the cache. PAF_REPO fetches the framework from
 another URL or path.`;
 

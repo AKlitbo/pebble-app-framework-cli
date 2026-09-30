@@ -7,7 +7,7 @@
  */
 import { describe, expect, test } from 'vitest';
 import { makeTree } from '../testing/tree.ts';
-import { installState, listsLibWorkspace } from './install.ts';
+import { installState, missingWorkspaces } from './install.ts';
 
 describe('installState', () => {
   /** Replacing the other system's install breaks every build over there, so it is its own state that stops the sync. */
@@ -46,13 +46,22 @@ describe('installState', () => {
   });
 });
 
-describe('listsLibWorkspace', () => {
+describe('missingWorkspaces', () => {
   /** A package.json that will not parse was read as missing its workspace, which sent the user to add a key to a broken file. */
   test('names a package.json that cannot be read', () => {
-    const root = makeTree({ 'package.json': '{ "workspaces": ["lib"], }' });
+    const root = makeTree({ 'package.json': '{ "workspaces": ["paf", "paf/plugins/*"], }' });
 
-    const result = () => listsLibWorkspace(root);
+    const result = () => missingWorkspaces(root);
 
     expect(result).toThrow(/package\.json could not be read/);
+  });
+
+  /** A unit moved from ["lib"] by editing one word listed paf alone, and no plugin's packages were ever installed. */
+  test('names the plugins workspace a unit listing only paf is missing', () => {
+    const root = makeTree({ 'package.json': '{ "workspaces": ["./paf/"] }' });
+
+    const result = missingWorkspaces(root);
+
+    expect(result).toEqual(['paf/plugins/*']);
   });
 });

@@ -6,13 +6,14 @@
  * records which system installed it, from which lock, and against which framework, and a sync from the
  * other system stops rather than replacing it without a word.
  *
- * lib/ is swapped before the install runs, so the framework's package.json is recorded here too. An install that
- * failed or was stopped after a framework move then reads as stale on the next sync and runs again,
+ * paf/ is swapped before the install runs, so the framework's package.json is recorded here too. An
+ * install that failed or was stopped after a framework move then reads as stale on the next sync and runs again,
  * where the lock alone, still matching the old install, would call it current.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { sha256 } from '../shared/hash.ts';
+import { messageOf } from '../shared/errors.ts';
 
 /** The stamp's name inside node_modules/. */
 export const INSTALL_STAMP = '.paf-install.json';
@@ -43,28 +44,41 @@ export function lockHash(unitDir: string): string | null {
 }
 
 /**
- * Whether a unit's package.json lists lib as a workspace, which is how npm installs the framework's
- * packages beside the unit's own.
+ * The workspaces a unit lists, which is how npm installs the framework's packages and each listed
+ * plugin's beside the unit's own. A glob that matches nothing, such as paf/plugins/* in a unit that
+ * lists no plugins, installs nothing, so a unit always lists both.
+ */
+export const FRAMEWORK_WORKSPACES = ['paf', 'paf/plugins/*'];
+
+/** The workspaces line a unit's package.json holds, as a message gives it. */
+export const WORKSPACES_LINE = `"workspaces": ${JSON.stringify(FRAMEWORK_WORKSPACES).replace(/,/g, ', ')}`;
+
+/**
+ * The framework workspaces a unit's package.json does not list.
  *
  * @param unitDir The unit's folder.
- * @return Whether it does. A missing package.json does not, and one that cannot be read stops with its error.
+ * @return The missing ones, all of them when there is no package.json. One that cannot be read stops with its error.
  */
-export function listsLibWorkspace(unitDir: string): boolean {
+export function missingWorkspaces(unitDir: string): string[] {
   const file = path.join(unitDir, 'package.json');
+  let listed: string[];
 
   try {
     const workspaces = JSON.parse(fs.readFileSync(file, 'utf8')).workspaces;
-    const listed: unknown[] = Array.isArray(workspaces) ? workspaces : workspaces?.packages ?? [];
+    const entries: unknown[] = Array.isArray(workspaces) ? workspaces : workspaces?.packages ?? [];
 
-    return listed.some((entry) => typeof entry === 'string' && entry.replace(/^\.\//, '').replace(/\/+$/, '') === 'lib');
+    listed = entries.filter((entry) => typeof entry === 'string').map((entry) => entry.replace(/^\.\//, '').replace(/\/+$/, ''));
   } catch (error) {
     // telling the user to add a key to a file that will not parse would send them the wrong way
     if (!fs.existsSync(file)) {
-      return false;
+      return [...FRAMEWORK_WORKSPACES];
     }
 
-    throw new Error(`${file} could not be read. ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    throw new Error(`${file} could not be read. ${messageOf(error)}`, { cause: error });
   }
+
+  // npm reads paf/plugins/** the same as paf/plugins/*, since each plugin is one folder down
+  return FRAMEWORK_WORKSPACES.filter((workspace) => !listed.includes(workspace) && !(workspace === 'paf/plugins/*' && listed.includes('paf/plugins/**')));
 }
 
 /**
@@ -91,6 +105,23 @@ export function writeInstallStamp(unitDir: string, stamp: InstallStamp): void {
   fs.writeFileSync(path.join(unitDir, 'node_modules', INSTALL_STAMP), JSON.stringify(stamp, null, 2) + '\n');
 }
 
+/** What a stale install records for its framework, which no package hash, the empty one included, can equal. */
+const STALE = 'stale';
+
+/**
+ * Marks a unit's install as needing npm install again, keeping the system it was made on, so the next
+ * sync installs rather than calling it current, and one from the other system is still refused.
+ *
+ * @param unitDir The unit's folder.
+ */
+export function markInstallStale(unitDir: string): void {
+  const stamp = readInstallStamp(unitDir);
+
+  if (stamp) {
+    writeInstallStamp(unitDir, { ...stamp, framework: STALE });
+  }
+}
+
 /**
  * Where a unit's install stands.
  *
@@ -100,7 +131,7 @@ export function writeInstallStamp(unitDir: string, stamp: InstallStamp): void {
  * @param stamp The install stamp, or null.
  * @param platform The system running paf.
  * @param lock The lock's hash.
- * @param framework What lib/ holds now, or undefined to leave it out of the comparison.
+ * @param framework What paf/ holds now, or undefined to leave it out of the comparison.
  * @return What the install needs.
  */
 export function installState(hasModules: boolean, stamp: InstallStamp | null, platform: string, lock: string | null, framework?: string): InstallState {

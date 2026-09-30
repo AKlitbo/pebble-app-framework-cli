@@ -1,7 +1,7 @@
 /**
  * Specs for keeping the framework mirror.
  *
- * Every command that fills a lib/ goes through the mirror, so a mirror that cannot recover stops paf
+ * Every command that fills a paf/ goes through the mirror, so a mirror that cannot recover stops paf
  * everywhere. The cases worth pinning are a clone that was stopped partway, each place the framework
  * comes from getting a mirror of its own, and files coming out with the endings they were committed with.
  */
@@ -49,13 +49,14 @@ describe('exportTree', () => {
   });
 
   /**
-   * Git for Windows turns autocrlf on for the whole machine, and a lib/ filled from Windows got build.sh
-   * with CRLF endings. bash in WSL then stopped on its first set line, and no sync put it right.
+   * Git for Windows turns autocrlf on for the whole machine, and a framework copy filled from Windows got
+   * CRLF endings, which the Pebble toolchain breaks on. The framework asks for LF, and the restore never
+   * reads that, so the files have to come out as committed.
    */
   test('writes files with the endings they were committed with where autocrlf is on', () => {
     const source = makeTree({ 'build.sh': 'set -euo pipefail\necho built\n' });
     const mirror = path.join(makeTree({}), 'mirror.git');
-    const dest = path.join(makeTree({}), 'lib');
+    const dest = path.join(makeTree({}), 'paf');
     const git = (...args: string[]) => spawnRunner('git', ['-c', 'user.name=spec', '-c', 'user.email=spec@example.com', ...args], { cwd: source, capture: true });
 
     git('init', '-q');

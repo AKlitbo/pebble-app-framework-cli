@@ -9,34 +9,33 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { makeContext, makeTree, fakeRunner } from '../testing/tree.ts';
+import { COMMIT, currentUnit, makeContext, makeTree, fakeRunner } from '../testing/tree.ts';
 import { installUnit, sync, syncUnit, use } from './sync.ts';
 import type { Unit } from '../repo/units.ts';
-import { frameworkPackageHash } from '../unit/lib.ts';
+import { frameworkPackageHash } from '../unit/framework.ts';
 
-const COMMIT = 'a'.repeat(40);
 const MOVED = 'b'.repeat(40);
 
-/** A unit pinned to v3.0.0, with the files given on top. */
+/** A unit pinned to v4.1.0, with the files given on top. */
 function unitWith(files: Record<string, string>): Unit {
   const root = makeTree({
     'watchfaces/ide-vscode/config/pebble.appinfo.json': '{ "name": "ide-vscode" }',
-    'watchfaces/ide-vscode/package.json': '{ "workspaces": ["lib"] }',
+    'watchfaces/ide-vscode/package.json': '{ "workspaces": ["paf", "paf/plugins/*"] }',
     ...files,
   });
 
   return { dir: path.join(root, 'watchfaces', 'ide-vscode'), rel: 'watchfaces/ide-vscode', name: 'ide-vscode', where: 'watchfaces/ide-vscode' };
 }
 
-/** A runner whose mirror resolves v3.0.0 to the given commit. */
+/** A runner whose mirror resolves v4.1.0 to the given commit. */
 function mirrorAt(commit: string) {
   return fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${commit}\n` } : undefined));
 }
 
 describe('syncUnit', () => {
   /** A tag moved upstream would change a finished face's framework without anyone moving its pin. */
-  test('refuses a tag that moved from the commit paf.json recorded', () => {
-    const unit = unitWith({ 'watchfaces/ide-vscode/paf.json': JSON.stringify({ framework: 'v3.0.0', commit: COMMIT }) });
+  test('refuses a tag that moved from the commit paf.config.json recorded', () => {
+    const unit = unitWith({ 'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT }) });
     const { ctx } = makeContext(path.dirname(path.dirname(unit.dir)), mirrorAt(MOVED).run);
 
     const result = () => syncUnit(ctx, unit, { locked: false, force: false });
@@ -44,9 +43,49 @@ describe('syncUnit', () => {
     expect(result).toThrow(/now points at bbbbbbb, but .*recorded aaaaaaa/);
   });
 
+  /**
+   * The stamp only named the commit, so a plugin added at the same tag never reached paf/, and the first
+   * paf gen for it failed with nothing saying a sync was needed.
+   */
+  test('fills paf/ again when the unit lists another plugin at the same tag', () => {
+    const unit = unitWith({
+      'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT, plugins: { icons: {}, thumbnails: {} } }),
+      'watchfaces/ide-vscode/paf/.paf.json': JSON.stringify({ commit: COMMIT, tag: 'v4.1.0', plugins: ['icons'] }),
+      'watchfaces/ide-vscode/package-lock.json': '{}',
+    });
+    const { run, calls } = fakeRunner((command, args) => {
+      if (args.includes('ls-tree')) {
+        return { stdout: 'src/plugins/icons\0src/plugins/thumbnails\0' };
+      }
+
+      if (command === 'npm') {
+        fs.mkdirSync(path.join(unit.dir, 'node_modules'), { recursive: true });
+      }
+
+      return args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined;
+    });
+    const { ctx } = makeContext(path.dirname(path.dirname(unit.dir)), run);
+
+    syncUnit(ctx, unit, { locked: false, force: false });
+
+    expect(calls.filter((call) => call.args.includes('restore'))).toHaveLength(1);
+  });
+
+  /** A unit renamed from paf.json with its framework 3 pin kept would otherwise go on to copy a src/ that tag does not have. */
+  test('refuses a pin below framework 4 before it asks the mirror', () => {
+    const unit = unitWith({ 'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v3.0.0', commit: COMMIT }) });
+    const { run, calls } = mirrorAt(COMMIT);
+    const { ctx } = makeContext(path.dirname(path.dirname(unit.dir)), run);
+
+    const result = () => syncUnit(ctx, unit, { locked: false, force: false });
+
+    expect(result).toThrow(/pins v3\.0\.0, which is framework 3 and needs paf 1\.0\.0\. This paf fills framework 4, so move the unit to a framework 4 tag with paf pin/);
+    expect(calls).toEqual([]);
+  });
+
   /** CI writes nothing, so a pin with no recorded commit has nothing to hold the tag to there. */
   test('refuses a pin with no recorded commit under --locked', () => {
-    const unit = unitWith({ 'watchfaces/ide-vscode/paf.json': JSON.stringify({ framework: 'v3.0.0' }), 'watchfaces/ide-vscode/package-lock.json': '{}' });
+    const unit = unitWith({ 'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0' }), 'watchfaces/ide-vscode/package-lock.json': '{}' });
     const { ctx } = makeContext(path.dirname(path.dirname(unit.dir)), mirrorAt(COMMIT).run);
 
     const result = () => syncUnit(ctx, unit, { locked: true, force: false });
@@ -57,8 +96,8 @@ describe('syncUnit', () => {
   /** A unit left on a local framework would build and release against code that is not in any tag. */
   test('refuses a unit on a local framework under --locked', () => {
     const unit = unitWith({
-      'watchfaces/ide-vscode/paf.json': JSON.stringify({ framework: 'v3.0.0', commit: COMMIT }),
-      'watchfaces/ide-vscode/lib/.paf-lib.json': JSON.stringify({ commit: COMMIT, local: '/work/pebble-app-framework' }),
+      'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT }),
+      'watchfaces/ide-vscode/paf/.paf.json': JSON.stringify({ commit: COMMIT, local: '/work/pebble-app-framework' }),
       'watchfaces/ide-vscode/package-lock.json': '{}',
     });
     const { ctx } = makeContext(path.dirname(path.dirname(unit.dir)), mirrorAt(COMMIT).run);
@@ -72,8 +111,8 @@ describe('syncUnit', () => {
   test('runs neither git restore nor npm for a unit that is current', () => {
     const lock = '{}';
     const unit = unitWith({
-      'watchfaces/ide-vscode/paf.json': JSON.stringify({ framework: 'v3.0.0', commit: COMMIT }),
-      'watchfaces/ide-vscode/lib/.paf-lib.json': JSON.stringify({ commit: COMMIT, tag: 'v3.0.0' }),
+      'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT }),
+      'watchfaces/ide-vscode/paf/.paf.json': JSON.stringify({ commit: COMMIT, tag: 'v4.1.0' }),
       'watchfaces/ide-vscode/package-lock.json': lock,
       'watchfaces/ide-vscode/node_modules/.paf-install.json': JSON.stringify({
         platform: 'linux',
@@ -93,13 +132,13 @@ describe('syncUnit', () => {
 
   /**
    * node_modules made from Windows holds Windows builds of sharp and esbuild. A pin moved from WSL must
-   * stop before it touches lib/, or the unit is left on the new framework with an install that breaks
+   * stop before it touches paf/, or the unit is left on the new framework with an install that breaks
    * on one side or the other.
    */
-  test('stops before refilling lib/ when node_modules came from the other system', () => {
+  test('stops before refilling paf/ when node_modules came from the other system', () => {
     const unit = unitWith({
-      'watchfaces/ide-vscode/paf.json': JSON.stringify({ framework: 'v3.0.0', commit: COMMIT }),
-      'watchfaces/ide-vscode/lib/.paf-lib.json': JSON.stringify({ commit: MOVED, tag: 'v2.2.0' }),
+      'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT }),
+      'watchfaces/ide-vscode/paf/.paf.json': JSON.stringify({ commit: MOVED, tag: 'v4.0.0' }),
       'watchfaces/ide-vscode/package-lock.json': '{}',
       'watchfaces/ide-vscode/node_modules/.paf-install.json': JSON.stringify({ platform: 'win32', lock: 'x' }),
     });
@@ -137,17 +176,17 @@ describe('installUnit', () => {
     expect(leftBehind).toEqual([false]);
   });
 
-  /** A swap carries lib/node_modules across, so the other system's native builds nested there survived --force too. */
-  test('clears lib/node_modules from the other system under --force', () => {
+  /** A swap carries paf/node_modules across, so the other system's native builds nested there survived --force too. */
+  test('clears paf/node_modules from the other system under --force', () => {
     const unit = unitWith({
       'watchfaces/ide-vscode/package-lock.json': '{}',
-      'watchfaces/ide-vscode/lib/node_modules/esbuild/linux.node': 'linux build',
+      'watchfaces/ide-vscode/paf/node_modules/esbuild/linux.node': 'linux build',
       'watchfaces/ide-vscode/node_modules/.paf-install.json': JSON.stringify({ platform: 'win32', lock: 'x' }),
     });
     const leftBehind: boolean[] = [];
     const { run } = fakeRunner((command) => {
       if (command === 'npm') {
-        leftBehind.push(fs.existsSync(path.join(unit.dir, 'lib', 'node_modules', 'esbuild')));
+        leftBehind.push(fs.existsSync(path.join(unit.dir, 'paf', 'node_modules', 'esbuild')));
         fs.mkdirSync(path.join(unit.dir, 'node_modules'), { recursive: true });
       }
 
@@ -161,29 +200,29 @@ describe('installUnit', () => {
   });
 });
 
-describe('syncUnit on a lib/ paf did not fill', () => {
-  /** The face repos mount the framework as a submodule at lib/, and replacing it would lose any framework work not yet committed there. */
-  test('stops rather than replace a lib/ with no stamp', () => {
+describe('syncUnit on a paf/ paf did not fill', () => {
+  /** A paf/ paf did not fill, such as a submodule mounted there by hand, can hold framework work not yet committed, which replacing it would lose. */
+  test('stops rather than replace a paf/ with no stamp', () => {
     const unit = unitWith({
-      'watchfaces/ide-vscode/paf.json': JSON.stringify({ framework: 'v3.0.0', commit: COMMIT }),
-      'watchfaces/ide-vscode/lib/.git': 'gitdir: ../.git/modules/lib\n',
-      'watchfaces/ide-vscode/lib/build.sh': 'uncommitted work',
+      'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT }),
+      'watchfaces/ide-vscode/paf/.git': 'gitdir: ../.git/modules/paf\n',
+      'watchfaces/ide-vscode/paf/build.sh': 'uncommitted work',
     });
     const { ctx } = makeContext(path.dirname(path.dirname(unit.dir)), mirrorAt(COMMIT).run);
 
     const result = () => syncUnit(ctx, unit, { locked: false, force: false });
 
     expect(result).toThrow(/paf did not put there/);
-    expect(fs.readFileSync(path.join(unit.dir, 'lib', 'build.sh'), 'utf8')).toBe('uncommitted work');
+    expect(fs.readFileSync(path.join(unit.dir, 'paf', 'build.sh'), 'utf8')).toBe('uncommitted work');
   });
 });
 
 describe('use pinned', () => {
-  /** The local lib/ was deleted before the checks ran, so a refused move back left the unit with no framework at all. */
-  test('keeps the local lib/ when the move back is refused', () => {
+  /** The local paf/ was deleted before the checks ran, so a refused move back left the unit with no framework at all. */
+  test('keeps the local paf/ when the move back is refused', () => {
     const unit = unitWith({
-      'watchfaces/ide-vscode/paf.json': JSON.stringify({ framework: 'v3.0.0', commit: COMMIT }),
-      'watchfaces/ide-vscode/lib/.paf-lib.json': JSON.stringify({ commit: COMMIT, local: '/work/pebble-app-framework' }),
+      'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT }),
+      'watchfaces/ide-vscode/paf/.paf.json': JSON.stringify({ commit: COMMIT, local: '/work/pebble-app-framework' }),
       'watchfaces/ide-vscode/node_modules/.paf-install.json': JSON.stringify({ platform: 'win32', lock: 'x' }),
     });
     const { ctx } = makeContext(path.dirname(path.dirname(unit.dir)), mirrorAt(COMMIT).run);
@@ -191,20 +230,20 @@ describe('use pinned', () => {
     const result = () => use(ctx, 'ide-vscode', 'pinned', undefined);
 
     expect(result).toThrow(/installed from win32/);
-    expect(fs.existsSync(path.join(unit.dir, 'lib', '.paf-lib.json'))).toBe(true);
+    expect(fs.existsSync(path.join(unit.dir, 'paf', '.paf.json'))).toBe(true);
   });
 });
 
 describe('installUnit after a framework move', () => {
   /**
-   * lib/ is swapped before the install runs. An install stopped partway left the old lock matching the old
+   * paf/ is swapped before the install runs. An install stopped partway left the old lock matching the old
    * stamp, so every sync after called it current and the new framework's dependencies never arrived.
    */
   test('installs again when the framework moved since the last install', () => {
     const unit = unitWith({
-      'watchfaces/ide-vscode/lib/.paf-lib.json': JSON.stringify({ commit: COMMIT, tag: 'v3.1.0' }),
-      'watchfaces/ide-vscode/lib/package.json': JSON.stringify({ name: 'pebble-app-framework', version: '3.1.0' }),
-      'watchfaces/ide-vscode/package-lock.json': JSON.stringify({ packages: { lib: { name: 'pebble-app-framework', version: '3.0.0' } } }),
+      'watchfaces/ide-vscode/paf/.paf.json': JSON.stringify({ commit: COMMIT, tag: 'v4.2.0' }),
+      'watchfaces/ide-vscode/paf/package.json': JSON.stringify({ name: 'pebble-app-framework', version: '4.2.0' }),
+      'watchfaces/ide-vscode/package-lock.json': JSON.stringify({ packages: { paf: { name: 'pebble-app-framework', version: '4.1.0' } } }),
       'watchfaces/ide-vscode/node_modules/.paf-install.json': JSON.stringify({ platform: 'linux', lock: 'the old lock', framework: MOVED }),
     });
     const { run, calls } = fakeRunner();
@@ -217,13 +256,13 @@ describe('installUnit after a framework move', () => {
 });
 
 describe('syncUnit on a local framework', () => {
-  /** lib/ was copied from the clone once, so framework edits made after paf use local were never built, and nothing said so. */
-  test('copies the clone again so its latest edits reach lib/', () => {
-    const clone = makeTree({ 'package.json': '{ "name": "pebble-app-framework" }', 'c/core/clock.c': 'fixed' });
+  /** paf/ was copied from the clone once, so framework edits made after paf use local were never built, and nothing said so. */
+  test('copies the clone again so its latest edits reach paf/', () => {
+    const clone = makeTree({ 'src/package.json': '{ "name": "pebble-app-framework" }', 'src/c/core/clock.c': 'fixed' });
     const unit = unitWith({
-      'watchfaces/ide-vscode/paf.json': JSON.stringify({ framework: 'v3.0.0', commit: COMMIT }),
-      'watchfaces/ide-vscode/lib/.paf-lib.json': JSON.stringify({ commit: COMMIT, local: clone, hash: 'before the fix' }),
-      'watchfaces/ide-vscode/lib/c/core/clock.c': 'broken',
+      'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT }),
+      'watchfaces/ide-vscode/paf/.paf.json': JSON.stringify({ commit: COMMIT, local: clone, hash: 'before the fix' }),
+      'watchfaces/ide-vscode/paf/c/core/clock.c': 'broken',
       'watchfaces/ide-vscode/package-lock.json': '{}',
     });
     const { run } = fakeRunner((command, args) => {
@@ -245,15 +284,15 @@ describe('syncUnit on a local framework', () => {
 
     syncUnit(ctx, unit, { locked: false, force: false });
 
-    expect(fs.readFileSync(path.join(unit.dir, 'lib', 'c', 'core', 'clock.c'), 'utf8')).toBe('fixed');
+    expect(fs.readFileSync(path.join(unit.dir, 'paf', 'c', 'core', 'clock.c'), 'utf8')).toBe('fixed');
   });
 
-  /** A local lib/ needs neither the mirror nor the tag, and builds on one stopped offline or after the tag moved upstream. */
-  test('syncs a local lib/ without asking the mirror for its tag', () => {
-    const clone = makeTree({ 'package.json': '{ "name": "pebble-app-framework" }' });
+  /** A local paf/ needs neither the mirror nor the tag, and builds on one stopped offline or after the tag moved upstream. */
+  test('syncs a local paf/ without asking the mirror for its tag', () => {
+    const clone = makeTree({ 'src/package.json': '{ "name": "pebble-app-framework" }' });
     const unit = unitWith({
-      'watchfaces/ide-vscode/paf.json': JSON.stringify({ framework: 'v3.0.0', commit: COMMIT }),
-      'watchfaces/ide-vscode/lib/.paf-lib.json': JSON.stringify({ commit: COMMIT, local: clone, hash: 'x' }),
+      'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT }),
+      'watchfaces/ide-vscode/paf/.paf.json': JSON.stringify({ commit: COMMIT, local: clone, hash: 'x' }),
       'watchfaces/ide-vscode/package-lock.json': '{}',
     });
     const { run, calls } = fakeRunner((command, args) => {
@@ -275,14 +314,14 @@ describe('syncUnit on a local framework', () => {
   });
 });
 
-describe('lib/ swaps', () => {
-  /** npm nests the framework's own dependencies in lib/node_modules, and a swap threw them away where no install check could see. */
-  test('carries lib/node_modules across', () => {
-    const clone = makeTree({ 'package.json': '{ "name": "pebble-app-framework" }' });
+describe('paf/ swaps', () => {
+  /** npm nests the framework's own dependencies in paf/node_modules, and a swap threw them away where no install check could see. */
+  test('carries paf/node_modules across', () => {
+    const clone = makeTree({ 'src/package.json': '{ "name": "pebble-app-framework" }' });
     const unit = unitWith({
-      'watchfaces/ide-vscode/paf.json': JSON.stringify({ framework: 'v3.0.0', commit: COMMIT }),
-      'watchfaces/ide-vscode/lib/.paf-lib.json': JSON.stringify({ commit: COMMIT, local: clone, hash: 'before' }),
-      'watchfaces/ide-vscode/lib/node_modules/esbuild/index.js': 'nested for the framework',
+      'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT }),
+      'watchfaces/ide-vscode/paf/.paf.json': JSON.stringify({ commit: COMMIT, local: clone, hash: 'before' }),
+      'watchfaces/ide-vscode/paf/node_modules/esbuild/index.js': 'nested for the framework',
       'watchfaces/ide-vscode/package-lock.json': '{}',
     });
     const { run } = fakeRunner((command, args) => {
@@ -300,14 +339,61 @@ describe('lib/ swaps', () => {
 
     syncUnit(ctx, unit, { locked: false, force: false });
 
-    expect(fs.readFileSync(path.join(unit.dir, 'lib', 'node_modules', 'esbuild', 'index.js'), 'utf8')).toBe('nested for the framework');
+    expect(fs.readFileSync(path.join(unit.dir, 'paf', 'node_modules', 'esbuild', 'index.js'), 'utf8')).toBe('nested for the framework');
+  });
+
+  /**
+   * npm nests a plugin's dependency, such as sharp, under the plugin when its version clashes with the
+   * unit's. Losing it on a swap meant every paf gen reinstalled it, and keeping a dropped plugin's left a
+   * stale native build under a folder the unit no longer lists.
+   */
+  test("carries each kept plugin's nested install across and drops a dropped one's", () => {
+    const clone = makeTree({ 'src/package.json': '{ "name": "pebble-app-framework" }', 'src/plugins/icons/package.json': '{}', 'src/plugins/frame/package.json': '{}' });
+    const unit = unitWith({
+      'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT, plugins: { icons: {} } }),
+      'watchfaces/ide-vscode/paf/.paf.json': JSON.stringify({ commit: COMMIT, local: clone, hash: 'before', plugins: ['frame', 'icons'] }),
+      'watchfaces/ide-vscode/paf/plugins/icons/node_modules/sharp/index.js': 'nested for icons',
+      'watchfaces/ide-vscode/paf/plugins/frame/node_modules/playwright/index.js': 'nested for frame',
+      'watchfaces/ide-vscode/package-lock.json': '{}',
+    });
+    const { run } = fakeRunner((command, args) => {
+      if (args.includes('ls-files')) {
+        return { stdout: 'package.json\0plugins/icons/package.json\0plugins/frame/package.json\0' };
+      }
+
+      if (command === 'npm') {
+        fs.mkdirSync(path.join(unit.dir, 'node_modules'), { recursive: true });
+      }
+
+      return args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined;
+    });
+    const { ctx } = makeContext(path.dirname(path.dirname(unit.dir)), run);
+
+    syncUnit(ctx, unit, { locked: false, force: false });
+
+    expect(fs.readFileSync(path.join(unit.dir, 'paf', 'plugins', 'icons', 'node_modules', 'sharp', 'index.js'), 'utf8')).toBe('nested for icons');
+    expect(fs.existsSync(path.join(unit.dir, 'paf', 'plugins', 'frame'))).toBe(false);
+  });
+
+  /** A clone switched to a framework 3 branch has no src/, and the sync failed with a git error that read as git not being installed. */
+  test('explains a local clone that no longer holds framework 4', () => {
+    const clone = makeTree({ 'package.json': '{ "name": "pebble-app-framework" }' });
+    const unit = unitWith({
+      'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT }),
+      'watchfaces/ide-vscode/paf/.paf.json': JSON.stringify({ commit: COMMIT, local: clone, hash: 'x' }),
+    });
+    const { ctx } = makeContext(path.dirname(path.dirname(unit.dir)), fakeRunner().run);
+
+    const result = () => syncUnit(ctx, unit, { locked: false, force: false });
+
+    expect(result).toThrow(/no longer holds a framework 4 clone.*or run paf use ide-vscode pinned/);
   });
 
   /** A clone path recorded from PowerShell reached git in WSL, which failed with nothing to say the path came from the other system. */
   test('explains a local clone that is not there', () => {
     const unit = unitWith({
-      'watchfaces/ide-vscode/paf.json': JSON.stringify({ framework: 'v3.0.0', commit: COMMIT }),
-      'watchfaces/ide-vscode/lib/.paf-lib.json': JSON.stringify({ commit: COMMIT, local: 'E:\\_DEV_\\pebble-app-framework', hash: 'x' }),
+      'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT }),
+      'watchfaces/ide-vscode/paf/.paf.json': JSON.stringify({ commit: COMMIT, local: 'E:\\_DEV_\\pebble-app-framework', hash: 'x' }),
     });
     const { ctx } = makeContext(path.dirname(path.dirname(unit.dir)), fakeRunner().run);
 
@@ -317,12 +403,75 @@ describe('lib/ swaps', () => {
   });
 });
 
+describe('installUnit after a swap that stopped', () => {
+  /**
+   * A swap stopped after its new stamp was written reads as current, so no fill ever ran again, and the
+   * nested installs left in the old copy were never put back while the install read as current too.
+   */
+  test('installs again when a copy is left beside paf/, and clears it', () => {
+    const unit = unitWith({
+      'watchfaces/ide-vscode/paf/package.json': '{ "name": "pebble-app-framework" }',
+      'watchfaces/ide-vscode/paf.paf-old/plugins/icons/node_modules/sharp/index.js': 'left behind',
+      'watchfaces/ide-vscode/package-lock.json': '{}',
+    });
+
+    fs.mkdirSync(path.join(unit.dir, 'node_modules'));
+    fs.writeFileSync(path.join(unit.dir, 'node_modules', '.paf-install.json'), JSON.stringify({ platform: 'linux', lock: '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', framework: frameworkPackageHash(unit.dir) }));
+
+    const { run, calls } = fakeRunner();
+    const { ctx } = makeContext(path.dirname(path.dirname(unit.dir)), run);
+
+    installUnit(ctx, unit, { locked: false, force: false });
+
+    expect(calls.map((call) => `${call.command} ${call.args[0]}`)).toEqual(['npm install']);
+    expect(fs.existsSync(path.join(unit.dir, 'paf.paf-old'))).toBe(false);
+  });
+});
+
+describe('installUnit after a plugin is listed', () => {
+  /** Listing frame changed neither the lock nor paf/package.json, so Playwright was never installed and the first frame bake failed. */
+  test('installs again when a plugin joins paf/ with the lock unchanged', () => {
+    const unit = unitWith({
+      'watchfaces/ide-vscode/paf/package.json': '{ "name": "pebble-app-framework" }',
+      'watchfaces/ide-vscode/package-lock.json': '{}',
+    });
+    const before = frameworkPackageHash(unit.dir);
+
+    fs.mkdirSync(path.join(unit.dir, 'node_modules'));
+    fs.writeFileSync(path.join(unit.dir, 'node_modules', '.paf-install.json'), JSON.stringify({ platform: 'linux', lock: '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', framework: before }));
+    fs.mkdirSync(path.join(unit.dir, 'paf', 'plugins', 'frame'), { recursive: true });
+    fs.writeFileSync(path.join(unit.dir, 'paf', 'plugins', 'frame', 'package.json'), '{ "dependencies": { "playwright": "1" } }');
+
+    const { run, calls } = fakeRunner();
+    const { ctx } = makeContext(path.dirname(path.dirname(unit.dir)), run);
+
+    installUnit(ctx, unit, { locked: false, force: false });
+
+    expect(calls.map((call) => `${call.command} ${call.args[0]}`)).toEqual(['npm install']);
+  });
+});
+
+describe('checkUnit and the workspaces', () => {
+  /** A unit moved from ["lib"] by editing one word was told only to list paf, and its plugins never installed. */
+  test('refuses a unit listing only paf, naming both workspaces', () => {
+    const unit = unitWith({
+      'watchfaces/ide-vscode/package.json': '{ "workspaces": ["paf"] }',
+      'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT }),
+    });
+    const { ctx } = makeContext(path.dirname(path.dirname(unit.dir)), mirrorAt(COMMIT).run);
+
+    const result = () => syncUnit(ctx, unit, { locked: false, force: false });
+
+    expect(result).toThrow('watchfaces/ide-vscode/package.json does not list paf/plugins/* in its workspaces, so npm never installs the plugins\' packages. Make it "workspaces": ["paf", "paf/plugins/*"]');
+  });
+});
+
 describe('installUnit on a local framework', () => {
-  /** Every edit in the framework clone ran a full npm install on the next build, though npm reads only lib/package.json. */
+  /** Every edit in the framework clone ran a full npm install on the next build, though npm reads only paf/package.json. */
   test('installs nothing when only the framework code changed', () => {
     const unit = unitWith({
-      'watchfaces/ide-vscode/lib/package.json': '{ "name": "pebble-app-framework" }',
-      'watchfaces/ide-vscode/lib/c/core/clock.c': 'edited since the last install',
+      'watchfaces/ide-vscode/paf/package.json': '{ "name": "pebble-app-framework" }',
+      'watchfaces/ide-vscode/paf/c/core/clock.c': 'edited since the last install',
       'watchfaces/ide-vscode/package-lock.json': '{}',
     });
 
@@ -403,9 +552,9 @@ describe('installUnit and the lock', () => {
 describe('use local', () => {
   /** An untracked git repo inside the clone is listed as its folder, and copying that folder as a file failed every build. */
   test('copies only files from a local clone', () => {
-    const clone = makeTree({ 'package.json': '{ "name": "pebble-app-framework" }', 'tools/scratch/.git/HEAD': 'ref: refs/heads/main\n' });
+    const clone = makeTree({ 'src/package.json': '{ "name": "pebble-app-framework" }', 'src/tools/scratch/.git/HEAD': 'ref: refs/heads/main\n' });
     const unit = unitWith({
-      'watchfaces/ide-vscode/paf.json': JSON.stringify({ framework: 'v3.0.0', commit: COMMIT }),
+      'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT }),
       'watchfaces/ide-vscode/package-lock.json': '{}',
     });
     const { run } = fakeRunner((command, args) => {
@@ -423,25 +572,39 @@ describe('use local', () => {
 
     use(ctx, 'ide-vscode', 'local', clone);
 
-    expect(fs.existsSync(path.join(unit.dir, 'lib', 'package.json'))).toBe(true);
+    expect(fs.existsSync(path.join(unit.dir, 'paf', 'package.json'))).toBe(true);
   });
 
-  /** Any folder with a package.json was taken as the clone, and paf use x local . copied the face repo into lib/. */
+  /** Any folder with a package.json was taken as the clone, and paf use x local . copied the face repo into paf/. */
   test('refuses a folder that is not a framework clone', () => {
     const notFramework = makeTree({ 'package.json': '{ "name": "pebble-watchfaces" }' });
-    const unit = unitWith({ 'watchfaces/ide-vscode/paf.json': JSON.stringify({ framework: 'v3.0.0', commit: COMMIT }) });
+    const unit = unitWith({ 'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT }) });
     const { ctx } = makeContext(path.dirname(path.dirname(unit.dir)), fakeRunner().run);
 
     const result = () => use(ctx, 'ide-vscode', 'local', notFramework);
 
     expect(result).toThrow(/does not name pebble-app-framework/);
   });
+
+  /**
+   * The framework's root package.json is the repo it is developed in, and what ships is under src/. A
+   * clone read by its root would pass on a framework 3 checkout and copy nothing, since it has no src/.
+   */
+  test('reads a clone by its src/package.json', () => {
+    const oldLayout = makeTree({ 'package.json': '{ "name": "pebble-app-framework" }' });
+    const unit = unitWith({ 'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT }) });
+    const { ctx } = makeContext(path.dirname(path.dirname(unit.dir)), fakeRunner().run);
+
+    const result = () => use(ctx, 'ide-vscode', 'local', oldLayout);
+
+    expect(result).toThrow(/its src\/package\.json does not name pebble-app-framework/);
+  });
 });
 
 describe('checkUnit', () => {
   /** npm climbed out of a unit with no package.json and wrote the repo root's lock and node_modules. */
   test('stops on a unit with no package.json before anything is written', () => {
-    const root = makeTree({ 'watchfaces/newfam/paf.json': JSON.stringify({ framework: 'v3.0.0', commit: COMMIT }) });
+    const root = makeTree({ 'watchfaces/newfam/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT }) });
     const unit = { dir: path.join(root, 'watchfaces', 'newfam'), rel: 'watchfaces/newfam', name: 'newfam', where: 'watchfaces/newfam' };
     const { run, calls } = mirrorAt(COMMIT);
     const { ctx } = makeContext(root, run);
@@ -453,15 +616,15 @@ describe('checkUnit', () => {
   });
 });
 
-describe('a leftover old lib/', () => {
+describe('a leftover old paf/', () => {
   /**
    * The old copy's delete can fail after a finished swap. Brought back later as if the swap had stopped,
    * it put a unit on whatever that copy held, a local framework included.
    */
-  test('is not brought back when no new lib/ sits beside it', () => {
+  test('is not brought back when no new paf/ sits beside it', () => {
     const unit = unitWith({
-      'watchfaces/ide-vscode/paf.json': JSON.stringify({ framework: 'v3.0.0', commit: COMMIT }),
-      'watchfaces/ide-vscode/lib.paf-old/.paf-lib.json': JSON.stringify({ commit: COMMIT, local: '/work/pebble-app-framework', hash: 'x' }),
+      'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT }),
+      'watchfaces/ide-vscode/paf.paf-old/.paf.json': JSON.stringify({ commit: COMMIT, local: '/work/pebble-app-framework', hash: 'x' }),
       'watchfaces/ide-vscode/package-lock.json': '{}',
     });
     const { run } = fakeRunner((command, args) => {
@@ -475,20 +638,56 @@ describe('a leftover old lib/', () => {
 
     syncUnit(ctx, unit, { locked: false, force: false });
 
-    expect(JSON.parse(fs.readFileSync(path.join(unit.dir, 'lib', '.paf-lib.json'), 'utf8'))).toEqual({ commit: COMMIT, tag: 'v3.0.0' });
+    expect(JSON.parse(fs.readFileSync(path.join(unit.dir, 'paf', '.paf.json'), 'utf8'))).toEqual({ commit: COMMIT, tag: 'v4.1.0', plugins: [] });
+  });
+});
+
+describe('use', () => {
+  /** Offline, paf use pinned showed a git fetch error for a unit still on framework 3, rather than how to move it. */
+  test('refuses a framework 3 pin before it fetches for paf use pinned', () => {
+    const root = makeTree({ 'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v3.0.0', commit: COMMIT }) });
+    const { run, calls } = fakeRunner();
+    const { ctx } = makeContext(root, run);
+
+    const result = () => use(ctx, 'mosaic', 'pinned', undefined);
+
+    expect(result).toThrow(/pins v3\.0\.0, which is framework 3/);
+    expect(calls).toEqual([]);
   });
 });
 
 describe('sync', () => {
+  /** Offline, the fetch failed first, so a unit still on framework 3 showed a git error rather than how to move it. */
+  test('refuses a framework 3 pin before it fetches', () => {
+    const root = makeTree({ 'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v3.0.0', commit: COMMIT }) });
+    const { run, calls } = fakeRunner();
+    const { ctx, printed } = makeContext(root, run);
+
+    const result = sync(ctx, undefined, { locked: false, force: false });
+
+    expect(result).toBe(1);
+    expect(calls).toEqual([]);
+    expect(printed[0]).toMatch(/^watchfaces\/mosaic: mosaic\/paf\.config\.json pins v3\.0\.0, which is framework 3/);
+  });
+
+  /** Offline, the fetch failed first, so a unit with no package.json showed a git error rather than what it lacks. */
+  test('refuses a unit with no package.json before it fetches', () => {
+    const root = makeTree({ 'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT }) });
+    const { run, calls } = fakeRunner();
+    const { ctx, printed } = makeContext(root, run);
+
+    const result = sync(ctx, undefined, { locked: false, force: false });
+
+    expect(result).toBe(1);
+    expect(calls).toEqual([]);
+    expect(printed[0]).toMatch(/has no package\.json, so npm would install into the folder above it/);
+  });
+
   /** sync stopped at the first unit it could not sync, so the units after it kept stale frameworks and CI only saw one problem. */
   test('syncs every unit when one fails', () => {
     const root = makeTree({
-      'watchfaces/alpha/paf.json': '{}',
-      'watchfaces/beta/paf.json': JSON.stringify({ framework: 'v3.0.0', commit: COMMIT }),
-      'watchfaces/beta/package.json': '{ "workspaces": ["lib"] }',
-      'watchfaces/beta/lib/.paf-lib.json': JSON.stringify({ commit: COMMIT, tag: 'v3.0.0' }),
-      'watchfaces/beta/package-lock.json': '{}',
-      'watchfaces/beta/node_modules/.paf-install.json': JSON.stringify({ platform: 'linux', lock: '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', framework: '' }),
+      'watchfaces/alpha/paf.config.json': '{}',
+      ...currentUnit('beta'),
     });
     const { ctx, printed } = makeContext(root, mirrorAt(COMMIT).run);
 

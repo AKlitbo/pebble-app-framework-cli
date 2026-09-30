@@ -1,57 +1,43 @@
 /**
- * Which of the framework's files a unit's lib/ gets.
+ * Which of the framework's files a unit's paf/ gets.
  *
- * The framework names them in its package.json `files` list, the usual way a package says what it
- * ships. paf turns that list into git pathspecs, so `git restore` and `git ls-files` take exactly those
- * files from a tag or from a local clone.
+ * Everything the framework ships sits in its src/ folder. paf takes that folder from a tag or from a
+ * local clone, leaving out the specs, their fixtures, and every plugin the unit does not list, so a unit
+ * carries only what its faces run and installs only what its plugins need.
  */
-import path from 'node:path';
+import { inSentence } from '../shared/words.ts';
 
-function isGlob(entry: string): boolean {
-  return /[*?[]/.test(entry);
-}
+/** The framework folder everything a unit gets comes from. */
+export const SHIP_ROOT = 'src';
+
+/** The folder in the framework repo that holds one folder per plugin. */
+export const PLUGINS_DIR = `${SHIP_ROOT}/plugins`;
+
+/** What ships from src/ whatever the unit lists: all of it but the specs and their fixtures. */
+export const BASE_PATHSPECS = ['.', ':(exclude,glob)**/*.spec.ts', ':(exclude,glob)**/*.spec.c', ':(exclude,glob)**/fixtures/**'];
 
 /**
- * Whether one `files` entry takes a file, the way git reads it as a pathspec: a plain entry takes
- * itself and everything under it, and a glob, given as :(glob), takes only the files it matches.
- * git restore and git ls-files both take `c/*` as the files straight in c/, not the folders under it.
+ * The pathspecs for what a unit gets from the framework, in git's form and relative to src/, so git
+ * restore reads them against the tag's src/ tree and git ls-files against the clone's src/ folder, and
+ * both give paths that are already paf/'s.
  *
- * Node's glob matching lets no * match a name that starts with a dot, where git's does, so a glob entry
- * that only matches dot files reads as matching nothing and is dropped. This only decides whether an
- * entry is there at all, and git does the taking.
+ * A plugin the unit lists that the framework does not offer is refused. git would take the exclude
+ * list without it and the unit would sync clean, then fail on the first paf gen with nothing saying the
+ * plugin was never there.
+ *
+ * @param listed The plugins the unit lists in paf.config.json.
+ * @param offered The plugins the framework has, the folders under src/plugins.
+ * @param source What the framework was read from, such as a tag, for the refusal.
+ * @return The pathspecs.
  */
-function entryTakes(entry: string, file: string): boolean {
-  return isGlob(entry) ? path.posix.matchesGlob(file, entry) : file === entry || file.startsWith(`${entry}/`);
-}
+export function shipPathspecs(listed: string[], offered: string[], source: string): string[] {
+  const missing = listed.filter((name) => !offered.includes(name));
 
-/**
- * The pathspecs for a framework's `files` list.
- *
- * An entry is a file, a folder, or a glob, and one starting with ! is a glob of files to leave out. For
- * git restore, an entry the commit does not hold, or a glob that matches nothing there, is dropped,
- * since git restore refuses a pathspec that matches nothing, and a later framework may list a file an
- * earlier tag never had. git ls-files takes such a pathspec as matching nothing, so a local clone
- * listed with it passes no file list and keeps every entry. package.json always ships, the same as npm
- * treats it, since the unit installs the framework as a workspace from it.
- *
- * @param files The framework's `files` list, or undefined when its package.json has none.
- * @param present Every file path the commit holds, or null for pathspecs git ls-files will read.
- * @return The pathspecs to take.
- */
-export function shipPathspecs(files: string[] | undefined, present: string[] | null): string[] {
-  if (!files) {
-    return ['.'];
+  if (missing.length) {
+    const has = offered.length ? `It has ${inSentence([...offered].sort())}` : 'It has no plugins';
+
+    throw new Error(`the unit lists the plugin${missing.length === 1 ? '' : 's'} ${inSentence(missing)}, which ${source} does not have. ${has}`);
   }
 
-  const has = (entry: string) => present === null || present.some((file) => entryTakes(entry, file));
-  // npm reads ./x and /x as x, from the package's own folder
-  const listed = files.filter((entry) => !entry.startsWith('!')).map((entry) => entry.replace(/^\.?\//, '').replace(/\/+$/, ''));
-  const include = [...new Set(['package.json', ...listed])].filter(has).map((entry) => (isGlob(entry) ? `:(glob)${entry}` : entry));
-  const exclude = files.filter((entry) => entry.startsWith('!')).map((entry) => `:(exclude,glob)${entry.slice(1)}`);
-
-  if (include.length === 0) {
-    throw new Error('the framework\'s files list names nothing this commit holds');
-  }
-
-  return [...include, ...exclude];
+  return [...BASE_PATHSPECS, ...offered.filter((name) => !listed.includes(name)).map((name) => `:(exclude,glob)plugins/${name}/**`)];
 }

@@ -1,6 +1,6 @@
 /**
  * The framework mirror: a bare clone in the cache for each place the framework comes from, which
- * every unit's lib/ is filled from.
+ * every unit's paf/ is filled from.
  *
  * Tags are fetched with --force, so a tag that moved upstream is seen straight away and the pin check
  * can catch it.
@@ -29,7 +29,7 @@ export function mirrorOf(ctx: Context): string {
  * Makes the mirror if it is missing, then fetches every tag.
  *
  * The clone is a full one. A clone without file contents would fetch each file on its own as git
- * restore fills lib/, and the whole framework is only a few tens of megabytes.
+ * restore fills paf/, and the whole framework is only a few tens of megabytes.
  *
  * @param run The runner.
  * @param mirror The mirror's folder.
@@ -98,18 +98,20 @@ export function showFile(run: Runner, mirror: string, ref: string, file: string)
 }
 
 /**
- * Every file path in a commit.
+ * The folders straight inside a folder at a commit, such as the plugins a framework tag offers.
  *
  * @param run The runner.
  * @param mirror The mirror's folder.
  * @param ref The tag or commit.
- * @return The paths, with forward slashes.
+ * @param dir The folder's path in the framework repo, with forward slashes.
+ * @return Each folder's name, or none when the commit has no such folder.
  */
-export function listFiles(run: Runner, mirror: string, ref: string): string[] {
-  // -z gives each name as it is, where a plain list quotes one with unusual characters in it
-  const out = must(run, 'git', ['-C', mirror, 'ls-tree', '-r', '-z', '--name-only', ref], { cwd: mirror, capture: true });
+export function listFolders(run: Runner, mirror: string, ref: string, dir: string): string[] {
+  // -d lists only folders, and -z gives each name as it is, where a plain list quotes one with unusual
+  // characters in it
+  const out = must(run, 'git', ['-C', mirror, 'ls-tree', '-d', '-z', '--name-only', ref, `${dir}/`], { cwd: mirror, capture: true });
 
-  return out.split('\0').filter(Boolean);
+  return out.split('\0').filter(Boolean).map((entry) => entry.slice(entry.lastIndexOf('/') + 1));
 }
 
 /** How many files are under a folder. */
@@ -137,9 +139,10 @@ export function exportTree(run: Runner, mirror: string, ref: string, pathspecs: 
   fs.mkdirSync(dest, { recursive: true });
 
   try {
-    // the restore starts from an empty folder and a spare index, so it reads no .gitattributes and the
-    // framework's eol=lf never applies. Git for Windows turns autocrlf on for the whole machine, which
-    // would write build.sh with CRLF endings that bash in WSL cannot run, so the files are taken as committed
+    // the framework's .gitattributes asks for LF on every text file, since the Pebble toolchain breaks
+    // on CRLF. the restore starts from an empty folder and a spare index, so it never reads that file,
+    // and Git for Windows turns autocrlf on for the whole machine. the files are taken as committed, so a
+    // unit filled from Windows holds the same bytes as one filled from WSL
     must(run, 'git', ['-c', 'core.autocrlf=false', '--git-dir', mirror, '--work-tree', dest, 'restore', `--source=${ref}`, '--worktree', '--', ...pathspecs], {
       cwd: dest,
       capture: true,
