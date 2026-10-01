@@ -38,6 +38,16 @@ describe('workflowActionTags', () => {
 });
 
 describe('unitState', () => {
+  /** A unit read as ready had an old copy beside paf/, and the next sync installed again with no warning. */
+  test('calls a unit with an old copy beside paf/ in need of a sync', () => {
+    const root = makeTree({ ...currentUnit('mosaic'), 'watchfaces/mosaic/paf.paf-old/package.json': '{}' });
+    const { ctx } = makeContext(root, fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined)).run);
+
+    const result = unitState(ctx, { dir: path.join(root, 'watchfaces', 'mosaic'), rel: 'watchfaces/mosaic', name: 'mosaic', where: 'watchfaces/mosaic' });
+
+    expect(result).toBe('needs paf sync, since paf.paf-old is left beside paf/');
+  });
+
   /** One unit with a broken paf.config.json stopped paf status before its table, so no other unit was shown either. */
   test('reports a unit it cannot read as a problem rather than throwing', () => {
     const root = makeTree({ 'watchfaces/mosaic/paf.config.json': '{ not json' });
@@ -97,7 +107,85 @@ describe('status', () => {
   });
 });
 
+/**
+ * doctor over one mosaic unit that is otherwise clean: current, every folder ignored, and no pebble, so
+ * the problem lines it prints are the ones the files given on top cause.
+ */
+function problemsWith(files: Record<string, string>): { result: number; problems: string[] } {
+  const root = makeTree({ ...currentUnit('mosaic'), ...files });
+  const unit = path.join(root, 'watchfaces', 'mosaic');
+  const stamp = path.join(unit, 'node_modules', '.paf-install.json');
+
+  // the install was made from paf/ as it now is, so the unit reads as ready
+  fs.writeFileSync(stamp, JSON.stringify({ ...JSON.parse(fs.readFileSync(stamp, 'utf8')), framework: frameworkPackageHash(unit) }));
+
+  const { ctx, printed } = makeContext(root, fakeRunner((command, args) => {
+    if (command === 'pebble') {
+      return { code: 1 };
+    }
+
+    if (args.includes('rev-parse')) {
+      return { stdout: `${COMMIT}\n` };
+    }
+
+    return args.includes('check-ignore') ? { stdout: args.slice(args.indexOf('check-ignore') + 1).join('\n') } : undefined;
+  }).run);
+  const result = doctor(ctx);
+
+  return { result, problems: printed.filter((line) => /^(problem|behind) /.test(line)) };
+}
+
 describe('doctor', () => {
+  /**
+   * A unit moved by hand keeps its old lib/ until someone deletes it, and nothing else in paf looks at it.
+   * paf 1.0.0 stamped the copies it filled, and one from before that is known by the framework's package.
+   */
+  test.each([
+    ['lib/.paf-lib.json', '{}'],
+    ['lib/package.json', '{ "name": "pebble-app-framework" }'],
+  ])('names a lib/ left from paf 1.0.0, known by %s', (file, text) => {
+    const result = problemsWith({ [`watchfaces/mosaic/${file}`]: text });
+
+    expect(result.problems).toEqual(['problem  watchfaces/mosaic/lib is left from paf 1.0.0, which filled it. Delete it, since paf 2.0.0 fills paf/']);
+  });
+
+  /** A face may keep code of its own in a folder called lib, which is not the framework's to name. */
+  test("leaves alone a lib/ of the face's own", () => {
+    const result = problemsWith({ 'watchfaces/mosaic/lib/colours.ts': 'export {};' });
+
+    expect(result.problems).toEqual([]);
+  });
+
+  /** A plugin listed but not synced is only noticed when paf gen <face> icons fails, unless doctor says so first. */
+  test('names a listed plugin paf/ does not hold', () => {
+    const result = problemsWith({
+      'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT, plugins: { icons: {} } }),
+      'watchfaces/mosaic/paf/.paf.json': JSON.stringify({ commit: COMMIT, tag: 'v4.1.0', plugins: ['icons'] }),
+    });
+
+    expect(result.problems).toEqual([
+      'problem  watchfaces/mosaic lists the icons plugin, which paf/ does not hold. Run paf sync mosaic',
+      'problem  watchfaces/mosaic need attention, see paf status',
+    ]);
+  });
+
+  /** A package.json broken by an edit read as fine to doctor, which passed while sync refused the unit. */
+  test('names a package.json that cannot be read', () => {
+    const result = problemsWith({ 'watchfaces/mosaic/package.json': '{ "workspaces": ["paf", ' });
+
+    expect(result.result).toBe(1);
+    expect(result.problems).toEqual([expect.stringMatching(/^problem {2}.*package\.json could not be read/)]);
+  });
+
+  /** sync refuses a unit whose workspaces leave out the plugins, and doctor is where someone looks first. */
+  test('names a workspaces that leaves out the plugins', () => {
+    const result = problemsWith({ 'watchfaces/mosaic/package.json': '{ "workspaces": ["paf"] }' });
+
+    expect(result.problems).toEqual([
+      'problem  watchfaces/mosaic/package.json does not list paf/plugins/* in its workspaces, so npm never installs the plugins\' packages. Make it "workspaces": ["paf", "paf/plugins/*"]',
+    ]);
+  });
+
   /**
    * A paf gen refused for the Node has to show up in doctor too, or the reason is only ever one error line.
    * The unit is otherwise clean, so the Node is the one thing that can fail it.
@@ -140,6 +228,7 @@ describe('doctor', () => {
     const root = makeTree({
       'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: 'a'.repeat(40) }),
       'watchfaces/mosaic/paf/.paf.json': JSON.stringify({ commit: 'a'.repeat(40), local: '/work/pebble-app-framework', hash: 'x' }),
+      'watchfaces/mosaic/package.json': '{ "workspaces": ["paf", "paf/plugins/*"] }',
     });
     // git check-ignore prints back each folder that is ignored, and here all of them are
     const { ctx, printed } = makeContext(root, fakeRunner((command, args) => {
@@ -150,8 +239,9 @@ describe('doctor', () => {
       return args.includes('check-ignore') ? { stdout: args.slice(args.indexOf('check-ignore') + 1).join('\n') } : undefined;
     }).run);
 
-    doctor(ctx);
+    const result = doctor(ctx);
 
+    expect(result).toBe(0);
     expect(printed.find((line) => line.includes('watchfaces/mosaic') && !line.includes('.github'))).toMatch(/^note /);
   });
 

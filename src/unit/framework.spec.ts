@@ -149,6 +149,20 @@ describe('fillFromClone', () => {
     expect(filesIn(path.join(unit, 'paf'))).toEqual(SHIPPED);
   });
 
+  /** A plugin deleted from a local unit's paf/ read as held, since the clone had not changed, and no sync put it back. */
+  test('copies the clone again when a listed plugin is gone from paf/', () => {
+    const { source } = frameworkRepo();
+    const unit = makeTree({});
+
+    fillFromClone(spawnRunner, source, unit, ['icons']);
+    fs.rmSync(path.join(unit, 'paf', 'plugins', 'icons'), { recursive: true });
+
+    const result = fillFromClone(spawnRunner, source, unit, ['icons']).changed;
+
+    expect(result).toBe(true);
+    expect(fs.existsSync(path.join(unit, 'paf', 'plugins', 'icons', 'package.json'))).toBe(true);
+  });
+
   /**
    * A plugin folder another branch left on disk, holding only ignored files, was read as a plugin the
    * clone offers, so a unit listing it synced clean with no plugin in paf/, where the tag refused it.

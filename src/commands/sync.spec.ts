@@ -71,6 +71,102 @@ describe('syncUnit', () => {
     expect(calls.filter((call) => call.args.includes('restore'))).toHaveLength(1);
   });
 
+  /** A plugin folder deleted from paf/ by hand read as held, so doctor said to sync and the sync never put it back. */
+  test("fills paf/ again when a listed plugin's folder is gone", () => {
+    const unit = unitWith({
+      'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT, plugins: { icons: {} } }),
+      'watchfaces/ide-vscode/paf/.paf.json': JSON.stringify({ commit: COMMIT, tag: 'v4.1.0', plugins: ['icons'] }),
+      'watchfaces/ide-vscode/package-lock.json': '{}',
+    });
+    const { run, calls } = fakeRunner((command, args) => {
+      if (args.includes('ls-tree')) {
+        return { stdout: 'src/plugins/icons\0' };
+      }
+
+      if (command === 'npm') {
+        fs.mkdirSync(path.join(unit.dir, 'node_modules'), { recursive: true });
+      }
+
+      return args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined;
+    });
+    const { ctx } = makeContext(path.dirname(path.dirname(unit.dir)), run);
+
+    syncUnit(ctx, unit, { locked: false, force: false });
+
+    expect(calls.filter((call) => call.args.includes('restore'))).toHaveLength(1);
+  });
+
+  /**
+   * A plugin deleted from paf/ by hand took its nested sharp with it. The refill brought the package.json
+   * back, which put the package hash back as the install recorded it, so npm never ran and sharp stayed gone.
+   * A delete Windows held up leaves part of sharp behind, which carried across would be as broken.
+   */
+  test.each([
+    ['deleted whole', (icons: string) => fs.rmSync(icons, { recursive: true })],
+    ['left with part of its nested install', (icons: string) => {
+      fs.rmSync(path.join(icons, 'package.json'));
+      fs.mkdirSync(path.join(icons, 'node_modules', 'sharp'), { recursive: true });
+    }],
+  ])('installs again when a refill brings back a plugin %s', (_how, remove) => {
+    const unit = unitWith({
+      ...currentUnit('ide-vscode'),
+      'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT, plugins: { icons: {} } }),
+      'watchfaces/ide-vscode/paf/.paf.json': JSON.stringify({ commit: COMMIT, tag: 'v4.1.0', plugins: ['icons'] }),
+      'watchfaces/ide-vscode/paf/plugins/icons/package.json': '{}',
+    });
+    const installStamp = path.join(unit.dir, 'node_modules', '.paf-install.json');
+    const core = fs.readFileSync(path.join(unit.dir, 'paf', 'package.json'), 'utf8');
+
+    // the install was made with the plugin in place, and then the plugin was deleted by hand
+    fs.writeFileSync(installStamp, JSON.stringify({ ...JSON.parse(fs.readFileSync(installStamp, 'utf8')), framework: frameworkPackageHash(unit.dir) }));
+    remove(path.join(unit.dir, 'paf', 'plugins', 'icons'));
+
+    const { run, calls } = fakeRunner((command, args) => {
+      if (args.includes('ls-tree')) {
+        return { stdout: 'src/plugins/icons\0' };
+      }
+
+      // the restore writes the tag's files back, the same package.json files the install was made from
+      if (args.includes('restore')) {
+        const dest = args[args.indexOf('--work-tree') + 1];
+
+        fs.mkdirSync(path.join(dest, 'plugins', 'icons'), { recursive: true });
+        fs.writeFileSync(path.join(dest, 'package.json'), core);
+        fs.writeFileSync(path.join(dest, 'plugins', 'icons', 'package.json'), '{}');
+      }
+
+      return args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined;
+    });
+    const { ctx } = makeContext(path.dirname(path.dirname(unit.dir)), run);
+
+    syncUnit(ctx, unit, { locked: false, force: false });
+
+    expect(calls.filter((call) => call.command === 'npm')).toHaveLength(1);
+    expect(fs.existsSync(path.join(unit.dir, 'paf', 'plugins', 'icons', 'node_modules'))).toBe(false);
+  });
+
+  /** A paf/ deleted whole took every nested install with it, and a refill with the same package.json files never ran npm. */
+  test('installs again when paf/ was deleted and filled again', () => {
+    const unit = unitWith(currentUnit('ide-vscode'));
+    const core = fs.readFileSync(path.join(unit.dir, 'paf', 'package.json'), 'utf8');
+
+    fs.rmSync(path.join(unit.dir, 'paf'), { recursive: true });
+
+    const { run, calls } = fakeRunner((command, args) => {
+      // the restore writes the tag's files back, the same package.json the install was made from
+      if (args.includes('restore')) {
+        fs.writeFileSync(path.join(args[args.indexOf('--work-tree') + 1], 'package.json'), core);
+      }
+
+      return args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined;
+    });
+    const { ctx } = makeContext(path.dirname(path.dirname(unit.dir)), run);
+
+    syncUnit(ctx, unit, { locked: false, force: false });
+
+    expect(calls.filter((call) => call.command === 'npm')).toHaveLength(1);
+  });
+
   /** A unit renamed from paf.json with its framework 3 pin kept would otherwise go on to copy a src/ that tag does not have. */
   test('refuses a pin below framework 4 before it asks the mirror', () => {
     const unit = unitWith({ 'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v3.0.0', commit: COMMIT }) });
@@ -314,6 +410,7 @@ describe('paf/ swaps', () => {
     const unit = unitWith({
       'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT }),
       'watchfaces/ide-vscode/paf/.paf.json': JSON.stringify({ commit: COMMIT, local: clone, hash: 'before' }),
+      'watchfaces/ide-vscode/paf/package.json': '{ "name": "pebble-app-framework" }',
       'watchfaces/ide-vscode/paf/node_modules/esbuild/index.js': 'nested for the framework',
       'watchfaces/ide-vscode/package-lock.json': '{}',
     });
@@ -345,6 +442,8 @@ describe('paf/ swaps', () => {
     const unit = unitWith({
       'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT, plugins: { icons: {} } }),
       'watchfaces/ide-vscode/paf/.paf.json': JSON.stringify({ commit: COMMIT, local: clone, hash: 'before', plugins: ['frame', 'icons'] }),
+      'watchfaces/ide-vscode/paf/package.json': '{ "name": "pebble-app-framework" }',
+      'watchfaces/ide-vscode/paf/plugins/icons/package.json': '{}',
       'watchfaces/ide-vscode/paf/plugins/icons/node_modules/sharp/index.js': 'nested for icons',
       'watchfaces/ide-vscode/paf/plugins/frame/node_modules/playwright/index.js': 'nested for frame',
       'watchfaces/ide-vscode/package-lock.json': '{}',

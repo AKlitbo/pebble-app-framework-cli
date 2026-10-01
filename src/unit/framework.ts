@@ -42,14 +42,30 @@ export type FrameworkStamp = {
 };
 
 /**
- * Whether paf/ holds the plugins a unit lists.
+ * The listed plugins paf/ has no package.json for. Every plugin ships one, so a folder deleted by hand,
+ * or one a delete Windows held up left with only a nested install in it, counts as missing.
  *
+ * @param unitDir The unit's folder.
+ * @param listed The plugins the unit lists.
+ * @return The ones paf/ does not hold.
+ */
+export function missingPlugins(unitDir: string, listed: string[]): string[] {
+  return listed.filter((name) => !fs.existsSync(path.join(unitDir, FRAMEWORK_DIR, PLUGINS_FOLDER, name, 'package.json')));
+}
+
+/**
+ * Whether paf/ holds the plugins a unit lists: its stamp records the same set, and each one is there. A
+ * plugin deleted by hand would otherwise read as held, and no sync would put it back.
+ *
+ * @param unitDir The unit's folder.
  * @param stamp What paf/ holds.
  * @param listed The plugins the unit lists.
- * @return True when the two are the same set.
+ * @return True when paf/ holds exactly the listed plugins.
  */
-export function holdsPlugins(stamp: FrameworkStamp, listed: string[]): boolean {
-  return [...(stamp.plugins ?? [])].sort().join(',') === [...listed].sort().join(',');
+export function holdsPlugins(unitDir: string, stamp: FrameworkStamp, listed: string[]): boolean {
+  const same = [...(stamp.plugins ?? [])].sort().join(',') === [...listed].sort().join(',');
+
+  return same && missingPlugins(unitDir, listed).length === 0;
 }
 
 // what a build reads from paf/ that waf does not track: the helpers and the wscript template in waf/.
@@ -238,15 +254,23 @@ export function isFrameworkClone(source: string): boolean {
 /**
  * Moves each nested install from the old copy into the same folder of paf/, for paf/ and each plugin
  * paf/ still has. A plugin paf/ no longer has keeps its install in the old copy, which goes with it.
+ *
+ * A plugin the old copy did not hold, such as one deleted from paf/ by hand, has no nested install to
+ * carry, and the package hash can match the last install again, so the install is marked stale and the
+ * next npm install puts back what it nested there. It is known by its package.json, as missingPlugins
+ * knows it, so a folder a held-up delete left with only part of a nested install is never carried.
  */
 function carryNestedInstalls(unitDir: string): void {
   const framework = path.join(unitDir, FRAMEWORK_DIR);
   const old = path.join(unitDir, `${FRAMEWORK_DIR}.paf-old`);
 
   for (const folder of workspaceFolders(unitDir)) {
-    const from = path.join(old, path.relative(framework, folder), 'node_modules');
+    const before = path.join(old, path.relative(framework, folder));
+    const from = path.join(before, 'node_modules');
 
-    if (fs.existsSync(from)) {
+    if (!fs.existsSync(path.join(before, 'package.json'))) {
+      markInstallStale(unitDir);
+    } else if (fs.existsSync(from)) {
       fs.renameSync(from, path.join(folder, 'node_modules'));
     }
   }
@@ -290,8 +314,9 @@ export function clearSwapLeftovers(unitDir: string): void {
  * in paf/node_modules or a plugin's node_modules. Those belong to the install rather than the copy, so
  * they move into the new paf/ once it is in place, to save an install. Nothing depends on the move
  * working: a leftover copy from an earlier swap, or a move that fails, such as on a native build Windows
- * is holding, marks the install stale, and the next npm install puts back whatever did not arrive. They
- * only come from the paf/ this swap moved aside. A leftover it could not clear may be half deleted, and
+ * is holding, marks the install stale, and the next npm install puts back whatever did not arrive. So
+ * does a fill with no paf/ to move aside, such as one deleted by hand. They only come from the paf/ this
+ * swap moved aside. A leftover it could not clear may be half deleted, and
  * npm takes a package whose package.json survived as installed whatever else is missing.
  */
 function replaceFramework(unitDir: string, fill: (dest: string) => void, stamp: FrameworkStamp): void {
@@ -336,6 +361,10 @@ function replaceFramework(unitDir: string, fill: (dest: string) => void, stamp: 
   try {
     if (movedAside) {
       carryNestedInstalls(unitDir);
+    } else {
+      // no paf/ to carry from, such as one deleted by hand, so the next npm install puts back what it
+      // nested there. a first fill has no install to mark
+      markInstallStale(unitDir);
     }
   } catch {
     markInstallStale(unitDir);
@@ -420,7 +449,7 @@ export function fillFromClone(run: Runner, clone: string, unitDir: string, plugi
   const hash = sha256(files.flatMap((file) => [file, fs.readFileSync(path.join(root, file))]), 16);
   const stamp = readStamp(unitDir);
 
-  if (stamp?.local === source && stamp.commit === commit && stamp.hash === hash) {
+  if (stamp?.local === source && stamp.commit === commit && stamp.hash === hash && holdsPlugins(unitDir, stamp, plugins)) {
     return { commit, count: files.length, changed: false };
   }
 

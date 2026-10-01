@@ -47,6 +47,33 @@ export function short(commit: string): string {
 }
 
 /**
+ * What is wrong with a unit's package.json for npm to install its framework, or null when nothing is.
+ *
+ * npm looks for the nearest folder holding a package.json, so in a unit with none it climbs to the repo
+ * root and writes that folder's lock and node_modules. Without paf in its workspaces npm never installs
+ * the framework's packages, and without paf/plugins/* never a plugin's, and the lock can never record
+ * them, so every sync would call it behind.
+ *
+ * @param unit The unit.
+ * @return The problem, naming what to change, or null.
+ */
+export function workspaceProblem(unit: Unit): string | null {
+  if (!fs.existsSync(path.join(unit.dir, 'package.json'))) {
+    return `${unit.where} has no package.json, so npm would install into the folder above it. Give it one with ${WORKSPACES_LINE}`;
+  }
+
+  const missing = missingWorkspaces(unit.dir);
+
+  if (missing.length === 0) {
+    return null;
+  }
+
+  const lost = inSentence(missing.map((workspace) => (workspace === 'paf' ? "the framework's packages" : "the plugins' packages")));
+
+  return `${unit.rel}/package.json does not list ${inSentence(missing)} in its workspaces, so npm never installs ${lost}. Make it ${WORKSPACES_LINE}`;
+}
+
+/**
  * Stops before a command changes a unit it should not, so a refusal leaves the unit as it was rather
  * than with a new framework and the old install. sync, use, and pin all run it before they write.
  *
@@ -71,24 +98,14 @@ export function checkUnit(ctx: Context, unit: Unit, options: SyncOptions): void 
     throw foreign;
   }
 
-  // npm looks for the nearest folder holding a package.json, so in a unit with none it climbs to the
-  // repo root and writes that folder's lock and node_modules
-  if (!fs.existsSync(path.join(unit.dir, 'package.json'))) {
-    throw new Error(`${unit.rel} has no package.json, so npm would install into the folder above it. Give it one with ${WORKSPACES_LINE}`);
-  }
+  const workspaces = workspaceProblem(unit);
 
-  // without paf in its workspaces npm never installs the framework's packages, and without paf/plugins/*
-  // never a plugin's, and the lock can never record them, so every sync would call it behind
-  const missing = missingWorkspaces(unit.dir);
-
-  if (missing.length) {
-    const lost = inSentence(missing.map((workspace) => (workspace === 'paf' ? "the framework's packages" : "the plugins' packages")));
-
-    throw new Error(`${unit.rel}/package.json does not list ${inSentence(missing)} in its workspaces, so npm never installs ${lost}. Make it ${WORKSPACES_LINE}`);
+  if (workspaces) {
+    throw new Error(workspaces);
   }
 
   if (options.locked && !lockHash(unit.dir)) {
-    throw new Error(`${unit.rel} has no package-lock.json, and --locked writes none`);
+    throw new Error(`${unit.where} has no package-lock.json, and --locked writes none`);
   }
 }
 
@@ -207,7 +224,7 @@ export function syncUnit(ctx: Context, unit: Unit, options: SyncOptions, read?: 
 
   // a unit that lists another plugin needs filling again at the same tag, which is also when a plugin
   // name the tag does not have is caught
-  if (stamp?.local || stamp?.commit !== commit || !holdsPlugins(stamp, plugins)) {
+  if (stamp?.local || stamp?.commit !== commit || !holdsPlugins(unit.dir, stamp, plugins)) {
     const count = fillFromTag(ctx.run, mirrorOf(ctx), unit.dir, pin.framework, commit, plugins);
 
     ctx.print(`${unit.where}: paf/ is on ${pin.framework} (${short(commit)}), ${count} files`);

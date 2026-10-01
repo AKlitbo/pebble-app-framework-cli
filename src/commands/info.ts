@@ -7,13 +7,13 @@ import { listTags, mirrorOf } from '../framework/mirror.ts';
 import { compareTags } from '../framework/tags.ts';
 import { frameworkEngines, wrongNode } from '../framework/engines.ts';
 import { compareVersions, parsePebbleVersion, parseToolchain, type Toolchain } from '../framework/toolchain.ts';
-import { fillableTags, latestTag, pinnedTag } from '../unit/config.ts';
+import { fillableTags, latestTag, pinnedTag, readListed } from '../unit/config.ts';
 import { unitFaces, type Unit } from '../repo/units.ts';
 import type { Context } from '../shared/context.ts';
 import { installState, lockHash, readInstallStamp } from '../unit/install.ts';
 import { messageOf } from '../shared/errors.ts';
-import { FRAMEWORK_DIR, frameworkPackageHash, holdsPlugins, readStamp, unitFramework } from '../unit/framework.ts';
-import { unitsOf } from './sync.ts';
+import { FRAMEWORK_DIR, frameworkPackageHash, hasOldCopy, holdsPlugins, missingPlugins, readStamp, unitFramework } from '../unit/framework.ts';
+import { unitsOf, workspaceProblem } from './sync.ts';
 
 /**
  * The tag a unit pins, or ? when its paf.config.json cannot be read, which its state column then
@@ -84,7 +84,7 @@ function stateOf(ctx: Context, unit: Unit): string {
 
   const { stamp, config } = read;
 
-  if (!stamp || !config.commit || stamp.commit !== config.commit || !holdsPlugins(stamp, read.plugins)) {
+  if (!stamp || !config.commit || stamp.commit !== config.commit || !holdsPlugins(unit.dir, stamp, read.plugins)) {
     return 'needs paf sync';
   }
 
@@ -95,7 +95,35 @@ function stateOf(ctx: Context, unit: Unit): string {
     return `node_modules from ${install?.platform}`;
   }
 
+  // the next sync installs again after an old copy is left beside paf/, since it may hold nested installs
+  if (state === 'current' && hasOldCopy(unit.dir)) {
+    return `needs paf sync, since ${FRAMEWORK_DIR}.paf-old is left beside ${FRAMEWORK_DIR}/`;
+  }
+
   return state === 'current' ? 'ready' : 'needs paf sync';
+}
+
+/**
+ * Whether a unit still holds the lib/ paf 1.0.0 filled, known by the stamp paf 1.0.0 wrote in it or the
+ * framework's own package.json, so a folder of the face's own called lib is never named.
+ */
+function leftoverLib(unitDir: string): boolean {
+  const lib = path.join(unitDir, 'lib');
+
+  if (fs.existsSync(path.join(lib, '.paf-lib.json'))) {
+    return true;
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(path.join(lib, 'package.json'), 'utf8')).name === 'pebble-app-framework';
+  } catch {
+    return false;
+  }
+}
+
+/** The plugins a unit lists that its paf/ does not hold, or none when paf/ is not there yet. */
+function pluginsNotHeld(unitDir: string): string[] {
+  return fs.existsSync(path.join(unitDir, FRAMEWORK_DIR)) ? missingPlugins(unitDir, readListed(unitDir).plugins) : [];
 }
 
 /** Pads each column to its widest cell. */
@@ -206,6 +234,20 @@ export function doctor(ctx: Context): number {
   say(git.code === 0 ? 'ok' : 'problem', git.code === 0 ? git.stdout.trim() : 'git is not on the PATH');
   say('ok', `node ${ctx.node}`);
 
+  // paf build, gen, check, and tool refuse a unit's scripts under a Node outside its framework's range.
+  // paf/ is read as it is, so a unit whose pin moved since its last sync is sent to paf sync as well
+  for (const unit of units) {
+    try {
+      const wrong = wrongNode(frameworkEngines(unit.dir), ctx.node, 'paf/package.json');
+
+      if (wrong) {
+        say('problem', `${unit.where}: ${wrong}, or run paf sync if its pin moved since the last one`);
+      }
+    } catch (error) {
+      say('problem', `${unit.where}: ${messageOf(error)}`);
+    }
+  }
+
   // one git check-ignore for every folder, which prints back the ones that are ignored. git quotes a
   // path holding a backslash, or one outside ASCII unless core.quotePath is off, so the paths are
   // relative to the repo with forward slashes and quoting is turned off. the trailing slash tells git
@@ -227,6 +269,30 @@ export function doctor(ctx: Context): number {
       say('problem', `${unit.rel}/targets is not gitignored, so build output and paf's build record could be committed`);
     }
 
+    if (leftoverLib(unit.dir)) {
+      say('problem', `${unit.rel}/lib is left from paf 1.0.0, which filled it. Delete it, since paf 2.0.0 fills paf/`);
+    }
+
+    // nothing else doctor reads looks at the unit's package.json, so one that cannot be read is named here
+    try {
+      const workspaces = workspaceProblem(unit);
+
+      if (workspaces) {
+        say('problem', workspaces);
+      }
+    } catch (error) {
+      say('problem', messageOf(error));
+    }
+
+    // a paf.config.json that cannot be read shows once, in the need attention line below
+    try {
+      for (const name of pluginsNotHeld(unit.dir)) {
+        say('problem', `${unit.where} lists the ${name} plugin, which paf/ does not hold. Run paf sync ${unit.name}`);
+      }
+    } catch {
+      // the state line names it
+    }
+
     // a swap that stopped partway, such as a delete an open file on Windows held up, leaves one of these.
     // it only holds a framework copy and its install, which the next sync fills again
     for (const left of fs.readdirSync(unit.dir).filter((name) => name === `${FRAMEWORK_DIR}.paf-new` || name === `${FRAMEWORK_DIR}.paf-old`)) {
@@ -239,24 +305,10 @@ export function doctor(ctx: Context): number {
   const local = states.filter(({ state }) => state.startsWith('local, '));
   const unready = states.filter(({ state }) => state !== 'ready' && !state.startsWith('local, '));
 
-  say(unready.length ? 'problem' : 'ok', unready.length ? `${unready.map(({ unit }) => unit.rel).join(', ')} need attention, see paf status` : 'every unit on a tag matches its pin');
+  say(unready.length ? 'problem' : 'ok', unready.length ? `${unready.map(({ unit }) => unit.where).join(', ')} need attention, see paf status` : 'every unit on a tag matches its pin');
 
   if (local.length) {
-    say('note', `${local.map(({ unit }) => unit.rel).join(', ')} on a local framework, which paf use <unit> pinned puts back on its tag`);
-  }
-
-  // paf build, gen, check, and tool refuse a unit's scripts under a Node outside its framework's range.
-  // paf/ is read as it is, so a unit whose pin moved since its last sync is sent to paf sync as well
-  for (const unit of units) {
-    try {
-      const wrong = wrongNode(frameworkEngines(unit.dir), ctx.node, 'paf/package.json');
-
-      if (wrong) {
-        say('problem', `${unit.where}: ${wrong}, or run paf sync if its pin moved since the last one`);
-      }
-    } catch (error) {
-      say('problem', `${unit.where}: ${messageOf(error)}`);
-    }
+    say('note', `${local.map(({ unit }) => unit.where).join(', ')} on a local framework, which paf use <unit> pinned puts back on its tag`);
   }
 
   // a toolchain paf cannot read is a problem whether or not there is a pebble to compare it with
