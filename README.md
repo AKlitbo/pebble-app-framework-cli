@@ -12,7 +12,7 @@ A unit is a folder with a `paf.config.json`:
 * a face of its own under `watchfaces/` or `watchapps/`
 * the repo root, for a repo that is one face or one family
 
-Each unit works like a small repo of its own.
+Each unit works like a small repo of its own. A face is a folder holding a `pebble.appinfo.json`, which is the unit itself for a face of its own, or a folder beside `core/` in a family.
 
 ```
 watchfaces/mosaic/
@@ -20,12 +20,12 @@ watchfaces/mosaic/
   package.json        the unit's scripts, with workspaces: ["paf", "paf/plugins/*"]
   package-lock.json
   config/             the unit's own tsconfigs, eslint.config.ts, and vitest.config.ts
-  tsconfig.json       references the tsconfigs in config/, so an editor finds them
+  tsconfig.json       "files": [] and a reference to each tsconfig in config/, so an editor finds them
   .gitignore          paf/, paf.paf-*/, node_modules/, targets/
   paf/                the framework, filled by paf sync
   node_modules/
-  core/
-  gridlock/
+  core/               the code the family's faces share
+  gridlock/           a face, with its pebble.appinfo.json, src/, and resources/
   sidereel/
 ```
 

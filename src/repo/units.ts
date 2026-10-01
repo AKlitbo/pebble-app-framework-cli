@@ -18,8 +18,11 @@ import { CONFIG_FILE } from '../unit/config.ts';
 /** The unit file paf 1.0.0 reads, which a unit moving to this paf renames by hand. */
 const OLD_CONFIG_FILE = 'paf.json';
 
-/** Where a face keeps its appinfo, relative to the face's own folder. */
-export const APPINFO_REL = path.join('config', 'pebble.appinfo.json');
+/** The appinfo that makes a folder a face, which sits at the face's own root. */
+export const APPINFO_REL = 'pebble.appinfo.json';
+
+/** Where framework 3 keeps a face's appinfo, which a unit moving to framework 4 moves up a folder. */
+const OLD_APPINFO_REL = 'config/pebble.appinfo.json';
 
 /**
  * One unit: its folder, that folder relative to the repo root, the name commands call it by, and how
@@ -101,29 +104,66 @@ export function findUnits(root: string): Unit[] {
 }
 
 /**
+ * The folders a family's faces can sit in, which are the ones beside its core/. A unit with no core/ is
+ * not a family and has none.
+ */
+function familyFolders(dir: string): string[] {
+  if (!fs.existsSync(path.join(dir, 'core'))) {
+    return [];
+  }
+
+  return fs.readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+}
+
+/**
+ * Names any face in a unit that still keeps its appinfo in config/. Left alone such a face would not
+ * count as one, so its unit would read as holding none, and sync, check, and test would pass without it.
+ *
+ * @param dir The unit's folder.
+ * @param from The folder each file is named from, for a message that does not name the unit already.
+ * @param folders The folders beside a family's core/, when the caller has them already.
+ * @return What to move, or null when every face's appinfo is at its own root.
+ */
+export function oldAppinfoProblem(dir: string, from = '', folders: string[] = familyFolders(dir)): string | null {
+  const left = [OLD_APPINFO_REL, ...folders.map((name) => `${name}/${OLD_APPINFO_REL}`)]
+    .filter((rel) => fs.existsSync(path.join(dir, rel)))
+    .map((rel) => path.posix.join(from, rel))
+    .sort();
+
+  if (left.length === 0) {
+    return null;
+  }
+
+  return `${inSentence(left)} ${left.length === 1 ? 'is' : 'are'} where framework 3 keeps an appinfo. Move each up a folder, beside the face's src/, since framework 4 finds a face by the ${APPINFO_REL} at its own root`;
+}
+
+/**
  * The faces in a unit, by name.
  *
  * @param dir The unit's folder.
  * @return The faces, ordered by name.
  */
 export function unitFaces(dir: string): Face[] {
+  const folders = familyFolders(dir);
+  const old = oldAppinfoProblem(dir, '', folders);
+
+  if (old) {
+    throw new Error(old);
+  }
+
   if (fs.existsSync(path.join(dir, APPINFO_REL))) {
     const appinfo = JSON.parse(fs.readFileSync(path.join(dir, APPINFO_REL), 'utf8'));
 
     if (!appinfo.name) {
-      throw new Error(`the face at ${dir} needs a name in its ${APPINFO_REL.split(path.sep).join('/')}`);
+      throw new Error(`the face at ${dir} needs a name in its ${APPINFO_REL}`);
     }
 
     return [{ name: appinfo.name, rel: '.' }];
   }
 
-  if (!fs.existsSync(path.join(dir, 'core'))) {
-    return [];
-  }
-
-  return fs.readdirSync(dir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(dir, entry.name, APPINFO_REL)))
-    .map((entry) => ({ name: entry.name, rel: entry.name }))
+  return folders
+    .filter((name) => fs.existsSync(path.join(dir, name, APPINFO_REL)))
+    .map((name) => ({ name, rel: name }))
     .sort((first, second) => first.name.localeCompare(second.name));
 }
 

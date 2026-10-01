@@ -17,7 +17,7 @@ function repoWith(files: Record<string, string> = {}): string {
   return makeTree({
     'watchfaces/mosaic/paf.config.json': PIN,
     'watchfaces/mosaic/package.json': '{ "workspaces": ["paf", "paf/plugins/*"] }',
-    'watchfaces/mosaic/gridlock/config/pebble.appinfo.json': '{ "name": "gridlock" }',
+    'watchfaces/mosaic/gridlock/pebble.appinfo.json': '{ "name": "gridlock" }',
     ...files,
   });
 }
@@ -199,7 +199,7 @@ describe('pin', () => {
   /** A half-edited appinfo stopped the pin after its changelog had printed, though the face names are only for a hint. */
   test('moves the pin when a face in the unit cannot be read', () => {
     // a unit that is one face reads its appinfo for the name, where a family takes names from its folders
-    const root = repoWith({ 'watchfaces/mosaic/config/pebble.appinfo.json': '{ half edited' });
+    const root = repoWith({ 'watchfaces/mosaic/pebble.appinfo.json': '{ half edited' });
     const { ctx } = makeContext(root, syncingRun(root));
 
     pin(ctx, 'mosaic', 'v4.2.0');

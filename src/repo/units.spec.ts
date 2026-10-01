@@ -17,10 +17,10 @@ function repo(): string {
   return makeTree({
     'watchfaces/mosaic/paf.config.json': PIN,
     'watchfaces/mosaic/core/.gitkeep': '',
-    'watchfaces/mosaic/gridlock/config/pebble.appinfo.json': '{ "name": "gridlock" }',
-    'watchfaces/mosaic/sidereel/config/pebble.appinfo.json': '{ "name": "sidereel" }',
+    'watchfaces/mosaic/gridlock/pebble.appinfo.json': '{ "name": "gridlock" }',
+    'watchfaces/mosaic/sidereel/pebble.appinfo.json': '{ "name": "sidereel" }',
     'watchfaces/ide-vscode/paf.config.json': PIN,
-    'watchfaces/ide-vscode/config/pebble.appinfo.json': '{ "name": "ide-vscode" }',
+    'watchfaces/ide-vscode/pebble.appinfo.json': '{ "name": "ide-vscode" }',
     'watchfaces/notes/readme.md': 'not a unit',
   });
 }
@@ -91,7 +91,7 @@ describe('findUnits', () => {
 
   /** A repo that is one face keeps its paf.config.json at the root, and the root is then the unit. */
   test('takes the repo root as a unit when it holds a paf.config.json', () => {
-    const root = makeTree({ 'paf.config.json': PIN, 'config/pebble.appinfo.json': '{ "name": "lcars-stardate" }' });
+    const root = makeTree({ 'paf.config.json': PIN, 'pebble.appinfo.json': '{ "name": "lcars-stardate" }' });
 
     const result = findUnits(root).map((unit) => unit.rel);
 
@@ -105,6 +105,28 @@ describe('unitFaces', () => {
     const result = unitFaces(path.join(repo(), 'watchfaces', 'mosaic')).map((face) => face.name);
 
     expect(result).toEqual(['gridlock', 'sidereel']);
+  });
+
+  /** A face of its own still holding config/pebble.appinfo.json read as a unit with no faces, so its build said there was no such face. */
+  test('refuses a face of its own that keeps its appinfo in config/', () => {
+    const root = makeTree({ 'paf.config.json': PIN, 'config/pebble.appinfo.json': '{ "name": "lcars-stardate" }' });
+
+    const result = () => unitFaces(root);
+
+    expect(result).toThrow(/^config\/pebble\.appinfo\.json is where framework 3 keeps an appinfo/);
+  });
+
+  /** A family face left with its appinfo in config/ dropped out of the family without a word. */
+  test('names each family face that keeps its appinfo in config/', () => {
+    const root = makeTree({
+      'core/.gitkeep': '',
+      'gridlock/pebble.appinfo.json': '{ "name": "gridlock" }',
+      'sidereel/config/pebble.appinfo.json': '{ "name": "sidereel" }',
+    });
+
+    const result = () => unitFaces(root);
+
+    expect(result).toThrow(/^sidereel\/config\/pebble\.appinfo\.json is where framework 3/);
   });
 });
 
@@ -125,10 +147,10 @@ describe('allFaces', () => {
     const root = makeTree({
       'watchfaces/one/paf.config.json': PIN,
       'watchfaces/one/core/.gitkeep': '',
-      'watchfaces/one/clock/config/pebble.appinfo.json': '{}',
+      'watchfaces/one/clock/pebble.appinfo.json': '{}',
       'watchfaces/two/paf.config.json': PIN,
       'watchfaces/two/core/.gitkeep': '',
-      'watchfaces/two/clock/config/pebble.appinfo.json': '{}',
+      'watchfaces/two/clock/pebble.appinfo.json': '{}',
     });
 
     const result = () => allFaces(findUnits(root));
@@ -140,7 +162,7 @@ describe('allFaces', () => {
   test('names an unreadable unit when a lookup by face finds nothing', () => {
     const root = makeTree({
       'watchfaces/radar-array/paf.config.json': '{}',
-      'watchfaces/radar-array/config/pebble.appinfo.json': '{ half edited',
+      'watchfaces/radar-array/pebble.appinfo.json': '{ half edited',
     });
 
     const result = () => findUnit(findUnits(root), 'radar-array-face');
@@ -153,9 +175,9 @@ describe('allFaces', () => {
     const root = makeTree({
       'watchfaces/mosaic/paf.config.json': '{}',
       'watchfaces/mosaic/core/.gitkeep': '',
-      'watchfaces/mosaic/gridlock/config/pebble.appinfo.json': '{ "name": "gridlock" }',
+      'watchfaces/mosaic/gridlock/pebble.appinfo.json': '{ "name": "gridlock" }',
       'watchfaces/sketchbook/paf.config.json': '{}',
-      'watchfaces/sketchbook/config/pebble.appinfo.json': '{ half edited',
+      'watchfaces/sketchbook/pebble.appinfo.json': '{ half edited',
     });
     const unreadable: string[] = [];
 

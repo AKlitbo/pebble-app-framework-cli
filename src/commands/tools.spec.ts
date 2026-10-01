@@ -34,7 +34,7 @@ function keyedUnit(name: string, plugins: string[], extra: Record<string, string
     [`${dir}/paf/.paf.json`]: JSON.stringify({ commit: COMMIT, tag: 'v4.1.0', plugins }),
     [`${dir}/paf/package.json`]: JSON.stringify({ paf: KEYS.core }),
     [`${dir}/core/.gitkeep`]: '',
-    [`${dir}/gridlock/config/pebble.appinfo.json`]: '{ "name": "gridlock" }',
+    [`${dir}/gridlock/pebble.appinfo.json`]: '{ "name": "gridlock" }',
   };
 
   for (const plugin of plugins) {

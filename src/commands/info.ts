@@ -8,7 +8,7 @@ import { compareTags } from '../framework/tags.ts';
 import { frameworkEngines, wrongNode } from '../framework/engines.ts';
 import { compareVersions, parsePebbleVersion, parseToolchain, type Toolchain } from '../framework/toolchain.ts';
 import { fillableTags, latestTag, pinnedTag, readListed } from '../unit/config.ts';
-import { unitFaces, type Unit } from '../repo/units.ts';
+import { oldAppinfoProblem, unitFaces, type Unit } from '../repo/units.ts';
 import type { Context } from '../shared/context.ts';
 import { installState, lockHash, readInstallStamp } from '../unit/install.ts';
 import { messageOf } from '../shared/errors.ts';
@@ -271,6 +271,12 @@ export function doctor(ctx: Context): number {
 
     if (leftoverLib(unit.dir)) {
       say('problem', `${unit.rel}/lib is left from paf 1.0.0, which filled it. Delete it, since paf 2.0.0 fills paf/`);
+    }
+
+    const oldAppinfo = oldAppinfoProblem(unit.dir, unit.rel);
+
+    if (oldAppinfo) {
+      say('problem', oldAppinfo);
     }
 
     // nothing else doctor reads looks at the unit's package.json, so one that cannot be read is named here

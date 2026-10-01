@@ -171,7 +171,7 @@ describe('build', () => {
     const root = makeTree({
       ...currentUnit('mosaic'),
       'watchfaces/mosaic/core/.gitkeep': '',
-      'watchfaces/mosaic/gridlock/config/pebble.appinfo.json': '{ "name": "gridlock" }',
+      'watchfaces/mosaic/gridlock/pebble.appinfo.json': '{ "name": "gridlock" }',
       'watchfaces/mosaic/targets/.paf-build.json': JSON.stringify({ gridlock: { keys: 'k', lock: 'l', framework: COMMIT } }),
     });
     const { run } = fakeRunner((command, args) => {
@@ -193,8 +193,8 @@ describe('build', () => {
     const root = makeTree({
       ...currentUnit('mosaic'),
       'watchfaces/mosaic/core/.gitkeep': '',
-      'watchfaces/mosaic/gridlock/config/pebble.appinfo.json': '{ "name": "gridlock" }',
-      'watchfaces/mosaic/sidereel/config/pebble.appinfo.json': '{ half edited',
+      'watchfaces/mosaic/gridlock/pebble.appinfo.json': '{ "name": "gridlock" }',
+      'watchfaces/mosaic/sidereel/pebble.appinfo.json': '{ half edited',
     });
     const { run, calls } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
     const { ctx } = makeContext(root, run);
@@ -210,7 +210,7 @@ describe('build', () => {
     const root = makeTree({
       ...currentUnit('mosaic'),
       'watchfaces/mosaic/core/.gitkeep': '',
-      'watchfaces/mosaic/gridlock/config/pebble.appinfo.json': '{ "name": "gridlock" }',
+      'watchfaces/mosaic/gridlock/pebble.appinfo.json': '{ "name": "gridlock" }',
     });
     const { run, calls } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
     const { ctx } = makeContext(root, run);
@@ -227,7 +227,7 @@ describe('build', () => {
     const root = makeTree({
       ...currentUnit('mosaic'),
       'watchfaces/mosaic/core/.gitkeep': '',
-      'watchfaces/mosaic/gridlock/config/pebble.appinfo.json': '{ "name": "gridlock" }',
+      'watchfaces/mosaic/gridlock/pebble.appinfo.json': '{ "name": "gridlock" }',
       'watchfaces/mosaic/targets/.paf-build.json': '{}',
     });
     const { run, calls } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
@@ -249,7 +249,7 @@ describe('build', () => {
       ...currentUnit('mosaic'),
       'watchfaces/mosaic/paf/package.json': JSON.stringify({ engines: { node: '^22.18.0 || >=24.2.0' }, paf: { build: { script: 'tools/build.ts' } } }),
       'watchfaces/mosaic/core/.gitkeep': '',
-      'watchfaces/mosaic/gridlock/config/pebble.appinfo.json': '{ "name": "gridlock" }',
+      'watchfaces/mosaic/gridlock/pebble.appinfo.json': '{ "name": "gridlock" }',
       'watchfaces/mosaic/targets/.paf-build.json': record,
     });
     const { run, calls } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
@@ -270,7 +270,7 @@ describe('build', () => {
     const root = makeTree({
       ...currentUnit('mosaic'),
       'watchfaces/mosaic/core/.gitkeep': '',
-      'watchfaces/mosaic/gridlock/config/pebble.appinfo.json': '{ "name": "gridlock" }',
+      'watchfaces/mosaic/gridlock/pebble.appinfo.json': '{ "name": "gridlock" }',
     });
     const { run, calls } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
     const { ctx } = makeContext(root, run);
@@ -288,7 +288,7 @@ describe('build', () => {
       'watchfaces/mosaic/paf/.paf.json': JSON.stringify({ commit: COMMIT, tag: 'v4.1.0', plugins: ['dev'] }),
       'watchfaces/mosaic/paf/plugins/dev/package.json': '{ "paf": { "tools": { "shots": {} } } }',
       'watchfaces/mosaic/core/.gitkeep': '',
-      'watchfaces/mosaic/gridlock/config/pebble.appinfo.json': '{ "name": "gridlock" }',
+      'watchfaces/mosaic/gridlock/pebble.appinfo.json': '{ "name": "gridlock" }',
     });
     const { run } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
     const { ctx } = makeContext(root, run);
@@ -304,7 +304,7 @@ describe('build', () => {
       ...currentUnit('mosaic'),
       'watchfaces/mosaic/paf/package.json': '{ "paf": {} }',
       'watchfaces/mosaic/core/.gitkeep': '',
-      'watchfaces/mosaic/gridlock/config/pebble.appinfo.json': '{ "name": "gridlock" }',
+      'watchfaces/mosaic/gridlock/pebble.appinfo.json': '{ "name": "gridlock" }',
     });
     const { run } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
     const { ctx, printed } = makeContext(root, run);

@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { mirrorOf, resolveRef, updateMirror } from '../framework/mirror.ts';
 import { configName, readListed, writePin } from '../unit/config.ts';
-import { findUnit, findUnits, type Unit } from '../repo/units.ts';
+import { findUnit, findUnits, oldAppinfoProblem, type Unit } from '../repo/units.ts';
 import type { Context } from '../shared/context.ts';
 import { must } from '../shared/runner.ts';
 import { WORKSPACES_LINE, installState, lockHash, markInstallStale, missingWorkspaces, readInstallStamp, writeInstallStamp } from '../unit/install.ts';
@@ -78,8 +78,8 @@ export function workspaceProblem(unit: Unit): string | null {
  * than with a new framework and the old install. sync, use, and pin all run it before they write.
  *
  * A node_modules installed from the other system stops it unless --force says to replace it, and so
- * does a paf/ paf did not fill, a unit with no package.json or one missing a framework workspace, and a
- * --locked run with no lock.
+ * does a paf/ paf did not fill, a face whose appinfo is still in config/, a unit with no package.json or
+ * one missing a framework workspace, and a --locked run with no lock.
  *
  * @param ctx The command context.
  * @param unit The unit.
@@ -96,6 +96,12 @@ export function checkUnit(ctx: Context, unit: Unit, options: SyncOptions): void 
 
   if (foreign) {
     throw foreign;
+  }
+
+  const oldAppinfo = oldAppinfoProblem(unit.dir, unit.rel);
+
+  if (oldAppinfo) {
+    throw new Error(oldAppinfo);
   }
 
   const workspaces = workspaceProblem(unit);

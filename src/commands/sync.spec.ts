@@ -19,7 +19,7 @@ const MOVED = 'b'.repeat(40);
 /** A unit pinned to v4.1.0, with the files given on top. */
 function unitWith(files: Record<string, string>): Unit {
   const root = makeTree({
-    'watchfaces/ide-vscode/config/pebble.appinfo.json': '{ "name": "ide-vscode" }',
+    'watchfaces/ide-vscode/pebble.appinfo.json': '{ "name": "ide-vscode" }',
     'watchfaces/ide-vscode/package.json': '{ "workspaces": ["paf", "paf/plugins/*"] }',
     ...files,
   });
@@ -704,6 +704,25 @@ describe('checkUnit', () => {
     const result = () => syncUnit(ctx, unit, { locked: false, force: false });
 
     expect(result).toThrow(/has no package.json, so npm would install into the folder above it/);
+    expect(calls.filter((call) => call.command === 'npm' || call.args.includes('restore'))).toEqual([]);
+  });
+
+  /** A family face left with its appinfo in config/ was skipped by sync, check, and test, which then passed without it. */
+  test('stops on a unit with a face whose appinfo is still in config/', () => {
+    const root = makeTree({
+      'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT }),
+      'watchfaces/mosaic/package.json': '{ "workspaces": ["paf", "paf/plugins/*"] }',
+      'watchfaces/mosaic/core/.gitkeep': '',
+      'watchfaces/mosaic/gridlock/pebble.appinfo.json': '{ "name": "gridlock" }',
+      'watchfaces/mosaic/sidereel/config/pebble.appinfo.json': '{ "name": "sidereel" }',
+    });
+    const unit = { dir: path.join(root, 'watchfaces', 'mosaic'), rel: 'watchfaces/mosaic', name: 'mosaic', where: 'watchfaces/mosaic' };
+    const { run, calls } = mirrorAt(COMMIT);
+    const { ctx } = makeContext(root, run);
+
+    const result = () => syncUnit(ctx, unit, { locked: false, force: false });
+
+    expect(result).toThrow(/^watchfaces\/mosaic\/sidereel\/config\/pebble\.appinfo\.json is where framework 3 keeps an appinfo/);
     expect(calls.filter((call) => call.command === 'npm' || call.args.includes('restore'))).toEqual([]);
   });
 });

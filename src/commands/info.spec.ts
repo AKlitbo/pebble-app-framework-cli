@@ -149,6 +149,16 @@ describe('doctor', () => {
     expect(result.problems).toEqual(['problem  watchfaces/mosaic/lib is left from paf 1.0.0, which filled it. Delete it, since paf 2.0.0 fills paf/']);
   });
 
+  /** A unit with a face's appinfo still in config/ read as ready and passed doctor, while sync, build, and check all stopped on it. */
+  test('names a face whose appinfo is still in config/', () => {
+    const result = problemsWith({
+      'watchfaces/mosaic/core/.gitkeep': '',
+      'watchfaces/mosaic/sidereel/config/pebble.appinfo.json': '{ "name": "sidereel" }',
+    });
+
+    expect(result.problems).toEqual([expect.stringMatching(/^problem {2}watchfaces\/mosaic\/sidereel\/config\/pebble\.appinfo\.json is where framework 3 keeps an appinfo/)]);
+  });
+
   /** A face may keep code of its own in a folder called lib, which is not the framework's to name. */
   test("leaves alone a lib/ of the face's own", () => {
     const result = problemsWith({ 'watchfaces/mosaic/lib/colours.ts': 'export {};' });
