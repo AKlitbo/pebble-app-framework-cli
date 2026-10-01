@@ -6,7 +6,7 @@ The `paf` command gives each family or face in a repo its own [pebble-app-framew
 
 ## Units
 
-A unit is a folder with a `paf.json`:
+A unit is a folder with a `paf.config.json`:
 
 * a family under `watchfaces/` or `watchapps/`, with its `core/` and one folder per face
 * a face of its own under `watchfaces/` or `watchapps/`
@@ -16,54 +16,74 @@ Each unit works like a small repo of its own.
 
 ```
 watchfaces/mosaic/
-  paf.json            { "framework": "v3.0.0", "commit": "..." }
-  package.json        the unit's scripts, with workspaces: ["lib"]
+  paf.config.json     the framework tag, its plugins, and the unit's own generators
+  package.json        the unit's scripts, with workspaces: ["paf", "paf/plugins/*"]
   package-lock.json
-  tsconfig.json
-  .gitignore          lib/, lib.paf-*/, node_modules/, targets/
-  lib/                the framework, filled by paf sync
+  config/             the unit's own tsconfigs, eslint.config.ts, and vitest.config.ts
+  tsconfig.json       references the tsconfigs in config/, so an editor finds them
+  .gitignore          paf/, paf.paf-*/, node_modules/, targets/
+  paf/                the framework, filled by paf sync
   node_modules/
   core/
   gridlock/
   sidereel/
 ```
 
-`lib/` holds only the files the framework's `package.json` `files` list names at the pinned tag, with no git inside it. The editor sees the same `lib/` the build uses, so every face resolves against its own framework. `paf.json` records the commit the tag pointed at when it was pinned, and a tag that later moves stops `paf sync` until `paf pin` takes the move.
+`paf.config.json` names the tag, the commit it pointed at when it was pinned, the framework plugins the unit lists with each one's settings, and the unit's own generators:
+
+```json
+{
+  "framework": "v4.0.0",
+  "commit": "…",
+  "plugins": { "icons": { "sources": "../../vendor" }, "thumbnails": {} },
+  "gen": { "vibrant": { "script": "core/tools/vibrant/generate-vibrant.ts", "after": "clay" } }
+}
+```
+
+`paf/` holds what is inside the framework's `src/` folder at the pinned tag, with the specs, their fixtures, and every plugin the unit does not list left out, and no git inside it. The editor sees the same `paf/` the build uses, so every face resolves against its own framework. A tag that later moves from the recorded commit stops `paf sync` until `paf pin` takes the move.
+
+`paf gen <face> all` runs the framework's generators first, then each listed plugin's in the order `paf.config.json` lists them, then the unit's own. A unit generator with an `after` runs right after the generator it names, wherever that one sits, and one without runs last. `when` filters per face once the order is fixed, so a unit generator placed after `clay` still runs on a face `clay` skips, unless it has a `when` of its own. A single kind, as in `paf gen <face> vibrant`, runs whatever `when` says. A unit generator's `script` is a `.ts` file relative to the unit.
 
 ## Commands
 
 | Command | What it does |
 | :-- | :-- |
-| `paf sync [unit] [--locked] [--force]` | Fills each unit's `lib/` from its tag and installs its `node_modules`. `--locked` is for CI and never writes. |
-| `paf status` | Each unit's faces, tag, the newest tag, and whether it is ready. |
+| `paf sync [unit] [--locked] [--force]` | Fills each unit's `paf/` from its tag and installs its `node_modules`. `--locked` is for CI and never writes. |
+| `paf status` | Each unit's faces, tag, the newest framework 4 tag, and whether it is ready. |
 | `paf pin <unit> <tag\|latest>` | Moves a unit, showing the framework changelog between the tags with the breaking entries first. |
-| `paf use <unit> local [path]`, `paf use <unit> pinned` | Points a unit's `lib/` at a local framework clone, builds included, and back. |
-| `paf build <face\|all> [--clean]` | Builds a face in its unit, clean when its keys, dependencies, or framework changed. Linux, WSL, or macOS, not Windows itself. |
-| `paf gen <face> <kind\|all>` | Runs a framework generator for a face, or every one it has inputs for. |
-| `paf run <unit\|face> <script>` | Runs any npm script in a unit. |
-| `paf test`, `lint`, `typecheck` `[unit]` | Runs the check in every unit, or one, against its own framework. |
-| `paf doctor` | Checks git, Node, the pins, the SDK against each tag's `toolchain.json`, and the workflows. |
+| `paf use <unit> local [path]`, `paf use <unit> pinned` | Points a unit's `paf/` at a local framework clone, builds included, and back. |
+| `paf build <face\|all> [--clean]` | Builds a face in its unit through the framework's `tools/build.ts`, clean when its keys, dependencies, or framework changed. Linux, WSL, or macOS, not Windows itself. |
+| `paf gen <face> <kind\|all> [args]` | Runs one generator the framework, a listed plugin, or the unit offers for a face, or every one the face has inputs for, in order. |
+| `paf check [unit]` | Runs every check the framework and the listed plugins ship, in every unit or one. |
+| `paf tool <face> <name> [args]` | Runs a tool a listed plugin offers, such as `clay-preview` or `tap-walk`, with every argument after the name as typed. |
+| `paf run <unit\|face> <script> [args]` | Runs any npm script in a unit. It is for the unit's own scripts, since the framework's tools run through `paf build`, `gen`, `check`, and `tool`. |
+| `paf test`, `lint`, `typecheck` `[unit]` | Runs the unit's own `test` or `lint` script, or `tsc` on every tsconfig in the unit outside `paf/`, `targets/`, and `node_modules/`, in every unit or one. |
+| `paf doctor` | Checks git, Node, the pins, the unit layout, the SDK against each tag's `toolchain.json`, and the workflows. |
 
 ## The Framework's Side
 
 `paf` reads what it needs from the framework at each unit's tag.
 
-* `package.json` `files` is the ship list for `lib/`.
-* `project/toolchain.json` records the SDK, the pebble-tool, and the Node major the tag was built with.
+* `src/` is what a unit gets in `paf/`, leaving out every `*.spec.ts`, `*.spec.c`, and `fixtures/` folder, and every plugin under `src/plugins/` the unit does not list.
+* The `paf` key in `src/package.json` and in each plugin's `package.json` names the build script, the generators, the checks, and the tools. `paf` runs the scripts the keys name and never learns what any of them does, so a generator, a check, or a tool the framework adds reaches a unit through its key, once the unit is on a tag that has it and lists its plugin.
+* `engines.node` in `src/package.json` is the Node range `paf build`, `gen`, `check`, and `tool` refuse to run outside.
+* `toolchain.json` at the top of `paf/` records the SDK, the pebble-tool, and the Node major the tag was built with.
 
-It carries a `format` number, and `paf` keeps reading every format a supported tag uses, since a unit can stay on an old tag for years.
+The toolchain carries a `format` number, and `paf` keeps reading every format a supported tag uses, since a unit can stay on an old tag for years.
 
 ## Install
 
 Each release on GitHub carries the built package. Install it with npm, in WSL and on Windows alike:
 
 ```sh
-npm i -g https://github.com/AKlitbo/pebble-app-framework-cli/releases/download/v1.0.0/pebble-app-framework-cli-1.0.0.tgz
+npm i -g https://github.com/AKlitbo/pebble-app-framework-cli/releases/download/v2.0.0/pebble-app-framework-cli-2.0.0.tgz
 ```
 
-The tool needs Node 22.18 or later with the npm it ships with, and `git`, and has no runtime dependencies. On Windows it runs npm through the `npm-cli.js` that every Windows install of Node puts beside `node`, and stops if it is not there.
+`paf 2.0.0` fills framework 4 only, and stops in a repo where any unit still has a `paf.json`. A repo with a unit staying on framework 3 keeps `paf 1.0.0` until every unit moves.
 
-The sync action in `.github/actions/sync` is for a face repo's CI. A workflow loads it from this repo at a tag, such as `AKlitbo/pebble-app-framework-cli/.github/actions/sync@v1.0.0`.
+The tool needs Node 22.18 or later with the npm it ships with, and `git`, and has no runtime dependencies. The framework's own tools take the range its `engines.node` names, which on framework 4 is 22.18 or later on Node 22, or 24.2 or later. On Windows `paf` runs npm through the `npm-cli.js` that every Windows install of Node puts beside `node`, and stops if it is not there.
+
+The sync action in `.github/actions/sync` is for a face repo's CI. A workflow loads it from this repo at a tag, such as `AKlitbo/pebble-app-framework-cli/.github/actions/sync@v2.0.0`.
 
 ## The Cache
 

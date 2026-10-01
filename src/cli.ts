@@ -36,7 +36,7 @@ usage: paf <command> [args]
                                run any npm script in a unit
   test | lint | typecheck [unit]
                                run the unit's own test or lint script, or tsc on its own tsconfigs, in every unit or one
-  doctor                       check git, node, the pins, the SDK, and the workflows
+  doctor                       check git, node, the pins, the unit layout, the SDK, and the workflows
 
 A unit is a folder with a paf.config.json: a family or a face of its own under watchfaces/ or watchapps/,
 or the repo root for a repo that is one face or one family. PAF_HOME moves the cache. PAF_REPO fetches the framework from
