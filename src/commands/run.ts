@@ -3,12 +3,13 @@
  * framework's build inside a unit, against that unit's paf/.
  */
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { mirrorOf, resolveRef, updateMirror } from '../framework/mirror.ts';
 import { allFaces, findFace, findUnit, APPINFO_REL, type Located, type Unit } from '../repo/units.ts';
 import type { Context } from '../shared/context.ts';
 import { lockHash } from '../unit/install.ts';
-import { configureIdentity, unitFramework, type UnitFramework } from '../unit/framework.ts';
+import { FRAMEWORK_DIR, configureIdentity, unitFramework, type UnitFramework } from '../unit/framework.ts';
 import { refuseNonScript, runFrameworkScript } from '../unit/scripts.ts';
 import { frameworkEngines, wrongNode } from '../framework/engines.ts';
 import { readKeys } from '../framework/keys.ts';
@@ -318,8 +319,107 @@ export function runScript(ctx: Context, target: string | undefined, script: stri
 }
 
 /**
+ * The folders the typecheck walk never goes into, at any depth: the framework copy, the build sandboxes,
+ * the installs, third-party files, and coverage reports. The framework's code-style plugin leaves the
+ * same folders out of its lint and its format, so a stray folder never passes one command and fails
+ * another.
+ */
+const NOT_THE_UNITS = new Set([FRAMEWORK_DIR, 'targets', 'node_modules', 'vendor', 'coverage']);
+
+/**
+ * Whether a folder is one the typecheck walk never goes into, which includes the swap folders beside paf/.
+ *
+ * A folder whose name starts with a dot is skipped too, since those hold an editor's or a tool's own
+ * files, such as a second checkout of the repo under .claude/worktrees/, whose paf/ is not filled.
+ * .github/ is the one that holds a repo's own files.
+ */
+function notTheUnits(name: string): boolean {
+  return NOT_THE_UNITS.has(name) || name.startsWith(`${FRAMEWORK_DIR}.paf-`) || (name.startsWith('.') && name !== '.github');
+}
+
+/**
+ * Every tsconfig.json and tsconfig.*.json a unit holds outside the folders that are not its own, in path
+ * order. paf/tsconfig.json would typecheck the framework's ts/ in every unit, and a sandbox's under
+ * targets/ fails on files the build has cleaned.
+ *
+ * @param unitDir The unit's folder.
+ * @return Each tsconfig's path from the unit, with forward slashes.
+ */
+export function unitTsconfigs(unitDir: string): string[] {
+  const found: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory() && !notTheUnits(entry.name)) {
+        walk(path.join(dir, entry.name));
+      } else if (entry.isFile() && /^tsconfig(\..+)?\.json$/.test(entry.name)) {
+        found.push(path.relative(unitDir, path.join(dir, entry.name)).split(path.sep).join('/'));
+      }
+    }
+  };
+
+  walk(unitDir);
+
+  return found.sort();
+}
+
+/**
+ * Runs tsc -p on each of a unit's own tsconfigs, every one to the end, and says whether all passed.
+ *
+ * tsc is the typescript the framework installs, found from paf/ and run under the Node paf is on, rather
+ * than through npx, which could fetch a package when the install is missing. It runs with --noEmit, since
+ * a unit tsconfig may extend paf/tsconfig.pkjs.json, which emits, and a check writes nothing. A unit with
+ * no tsconfig fails, since a typecheck that checks nothing and passes hides every type error in the unit.
+ */
+function typecheckUnit(ctx: Context, unit: Unit): boolean {
+  let configs: string[];
+
+  // a folder the walk cannot read fails this unit and leaves the rest of the run to go on
+  try {
+    configs = unitTsconfigs(unit.dir);
+  } catch (error) {
+    ctx.print(`${unit.where}: ${messageOf(error)}`);
+    return false;
+  }
+
+  if (configs.length === 0) {
+    ctx.print(`${unit.where} has no tsconfig to check`);
+    return false;
+  }
+
+  let tsc: string | null;
+
+  // node looks in every folder above for a package, and a typescript from outside the unit, such as one
+  // left at the repo root, is not the one the unit installed. node gives the real path of what it finds,
+  // so the unit's folder is made real too, or a repo reached through a link or a subst drive reads as
+  // holding none
+  try {
+    const found = createRequire(path.join(unit.dir, FRAMEWORK_DIR, 'package.json')).resolve('typescript/bin/tsc');
+    const fromUnit = path.relative(fs.realpathSync(unit.dir), fs.realpathSync(found));
+
+    tsc = fromUnit.startsWith('..') || path.isAbsolute(fromUnit) ? null : found;
+  } catch {
+    tsc = null;
+  }
+
+  if (!tsc) {
+    ctx.print(`${unit.where} has no typescript installed. Delete its node_modules and run paf sync ${unit.name}`);
+    return false;
+  }
+
+  let passed = true;
+
+  for (const config of configs) {
+    ctx.print(`== typecheck: ${unit.where} ${config} ==`);
+    passed = ctx.run(process.execPath, [tsc, '-p', config, '--noEmit'], { cwd: unit.dir }).code === 0 && passed;
+  }
+
+  return passed;
+}
+
+/**
  * paf test | lint | typecheck [unit]
  *
+ * test and lint run the unit's own npm scripts, and typecheck runs tsc on the unit's own tsconfigs.
  * Every unit runs to the end whether or not another failed, so one failure never hides the rest.
  *
  * @param ctx The command context.
@@ -332,9 +432,14 @@ export function unitCheck(ctx: Context, script: string, target: string | undefin
   const failed: string[] = [];
 
   for (const unit of target ? [findUnit(units, target)] : units) {
-    ctx.print(`== ${script}: ${unit.where} ==`);
+    // typecheck names each tsconfig as it goes, which names the unit too
+    if (script !== 'typecheck') {
+      ctx.print(`== ${script}: ${unit.where} ==`);
+    }
 
-    if (!tryReady(ctx, unit) || !runIn(ctx, unit, 'npm', ['run', script])) {
+    const passed = tryReady(ctx, unit) !== null && (script === 'typecheck' ? typecheckUnit(ctx, unit) : runIn(ctx, unit, 'npm', ['run', script]));
+
+    if (!passed) {
       failed.push(unit.where);
     }
   }

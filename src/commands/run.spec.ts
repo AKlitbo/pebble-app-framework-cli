@@ -3,14 +3,16 @@
  *
  * A build that should have started clean fails on an undeclared message key, or ships an old library
  * while reporting success. A check over many units that stops at the first hides the failures after it.
+ * The typecheck walk decides which tsconfigs are the unit's own, and one that reaches into paf/ or the
+ * sandboxes checks the wrong code, while one that finds nothing and passes hides every type error.
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, onTestFinished, test, vi } from 'vitest';
 import { COMMIT, currentUnit, fakeRunner, makeContext, makeTree } from '../testing/tree.ts';
 import { configureIdentity } from '../unit/framework.ts';
 import { SCRIPT_FLAGS } from '../unit/scripts.ts';
-import { build, cleanReason, ready, runScript, unitCheck } from './run.ts';
+import { build, cleanReason, ready, runScript, unitCheck, unitTsconfigs } from './run.ts';
 
 describe('ready', () => {
   /** Offline, a build on a unit still on framework 3 showed a git fetch error rather than how to move it. */
@@ -397,7 +399,170 @@ describe('fetching once per command', () => {
   });
 });
 
+describe('unitTsconfigs', () => {
+  /**
+   * paf/tsconfig.json would typecheck the framework's ts/ in every unit, which is the run the unit's own
+   * typecheck exists to stop, and a sandbox's under targets/ fails on files the build has cleaned.
+   */
+  test("finds the unit's own tsconfigs and none from the framework, the sandboxes, or the installs", () => {
+    const root = makeTree({
+      'tsconfig.json': '{}',
+      'core/tsconfig.builder.json': '{}',
+      'gridlock/tsconfig.spec.json': '{}',
+      'paf/tsconfig.json': '{}',
+      'paf/plugins/dev/tsconfig.json': '{}',
+      'paf.paf-old/tsconfig.json': '{}',
+      'targets/gridlock/tsconfig.json': '{}',
+      'node_modules/x/tsconfig.json': '{}',
+      'core/node_modules/y/tsconfig.json': '{}',
+      'core/tsconfig-notes.md': '',
+    });
+
+    const result = unitTsconfigs(root);
+
+    expect(result).toEqual(['core/tsconfig.builder.json', 'gridlock/tsconfig.spec.json', 'tsconfig.json']);
+  });
+
+  /**
+   * A second checkout of the repo under .claude/worktrees/ has no filled paf/, so its tsconfigs fail on
+   * files the unit does not own, and a vendored package's tsconfig is not the unit's to check either.
+   */
+  test('finds none in a dot folder, in vendor/, or in coverage/, and keeps .github/', () => {
+    const root = makeTree({
+      'tsconfig.json': '{}',
+      '.github/scripts/tsconfig.json': '{}',
+      '.claude/worktrees/one/tsconfig.json': '{}',
+      '.tmp/tsconfig.json': '{}',
+      'gridlock/.cache/tsconfig.json': '{}',
+      'vendor/icons/tsconfig.json': '{}',
+      'coverage/tsconfig.json': '{}',
+    });
+
+    const result = unitTsconfigs(root);
+
+    expect(result).toEqual(['.github/scripts/tsconfig.json', 'tsconfig.json']);
+  });
+});
+
 describe('unitCheck', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** A folder one unit's walk could not read stopped the typecheck of every unit after it. */
+  test('typechecks the next unit when one unit has a folder it cannot read', () => {
+    const typescript = (name: string) => ({
+      [`watchfaces/${name}/tsconfig.json`]: '{}',
+      [`watchfaces/${name}/node_modules/typescript/package.json`]: '{ "name": "typescript", "version": "5.9.3" }',
+      [`watchfaces/${name}/node_modules/typescript/bin/tsc`]: '',
+    });
+    const root = makeTree({ ...currentUnit('alpha'), ...typescript('alpha'), ...currentUnit('beta'), ...typescript('beta') });
+    const locked = path.join(root, 'watchfaces', 'alpha');
+    const readdirSync = fs.readdirSync;
+
+    vi.spyOn(fs, 'readdirSync').mockImplementation(((dir: fs.PathLike, options?: unknown) => {
+      if (dir === locked && options !== undefined) {
+        throw Object.assign(new Error(`EACCES: permission denied, scandir '${locked}'`), { code: 'EACCES' });
+      }
+
+      return (readdirSync as (dir: fs.PathLike, options?: unknown) => unknown)(dir, options);
+    }) as typeof fs.readdirSync);
+
+    const { run, calls } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
+    const { ctx, printed } = makeContext(root, run);
+
+    const result = unitCheck(ctx, 'typecheck', undefined);
+
+    expect(result).toBe(1);
+    expect(calls.filter((call) => call.command === process.execPath).map((call) => call.options.cwd)).toEqual([path.join(root, 'watchfaces', 'beta')]);
+    expect(printed).toContain(`watchfaces/alpha: EACCES: permission denied, scandir '${locked}'`);
+    expect(printed).toContain('typecheck failed in watchfaces/alpha');
+  });
+
+  /** A unit whose install lost typescript took the one left at the repo root, a version the unit never installed. */
+  test('refuses a typescript from outside the unit', () => {
+    const root = makeTree({
+      ...currentUnit('mosaic'),
+      'watchfaces/mosaic/tsconfig.json': '{}',
+      'node_modules/typescript/package.json': '{ "name": "typescript", "version": "5.9.3" }',
+      'node_modules/typescript/bin/tsc': '',
+    });
+    const { run, calls } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
+    const { ctx, printed } = makeContext(root, run);
+
+    const result = unitCheck(ctx, 'typecheck', undefined);
+
+    expect(result).toBe(1);
+    expect(calls.filter((call) => call.command === process.execPath)).toEqual([]);
+    expect(printed).toContain('watchfaces/mosaic has no typescript installed. Delete its node_modules and run paf sync mosaic');
+  });
+
+  /** A repo reached through a link was told its unit had no typescript, and deleting node_modules did not help. */
+  test('takes the unit\'s typescript when the repo is reached through a link', () => {
+    const root = makeTree({
+      ...currentUnit('mosaic'),
+      'watchfaces/mosaic/tsconfig.json': '{}',
+      'watchfaces/mosaic/node_modules/typescript/package.json': '{ "name": "typescript", "version": "5.9.3" }',
+      'watchfaces/mosaic/node_modules/typescript/bin/tsc': '',
+    });
+    const link = `${root}-link`;
+
+    fs.symlinkSync(root, link, 'junction');
+    onTestFinished(() => fs.rmSync(link, { force: true }));
+
+    const { run, calls } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
+    const { ctx } = makeContext(link, run);
+
+    const result = unitCheck(ctx, 'typecheck', undefined);
+
+    expect(result).toBe(0);
+    expect(calls.filter((call) => call.command === process.execPath).map((call) => call.options.cwd)).toEqual([path.join(link, 'watchfaces', 'mosaic')]);
+  });
+
+  /** A typecheck that checked nothing and passed hid every type error in the unit. */
+  test('fails a unit with no tsconfig and says so', () => {
+    const root = makeTree(currentUnit('mosaic'));
+    const { run } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
+    const { ctx, printed } = makeContext(root, run);
+
+    const result = unitCheck(ctx, 'typecheck', undefined);
+
+    expect(result).toBe(1);
+    expect(printed).toContain('watchfaces/mosaic has no tsconfig to check');
+  });
+
+  /**
+   * npx can fetch a typescript of its own when the install is missing, so tsc is the framework's own, run
+   * under the Node paf is on, once per tsconfig from the unit. --noEmit keeps a tsconfig that extends the
+   * emitting pkjs one from writing .js files into the unit.
+   */
+  test("runs the framework's tsc on each tsconfig, every one to the end", () => {
+    const root = makeTree({
+      ...currentUnit('mosaic'),
+      'watchfaces/mosaic/tsconfig.json': '{}',
+      'watchfaces/mosaic/core/tsconfig.builder.json': '{}',
+      'watchfaces/mosaic/node_modules/typescript/package.json': '{ "name": "typescript", "version": "5.9.3" }',
+      'watchfaces/mosaic/node_modules/typescript/bin/tsc': '',
+    });
+    const { run, calls } = fakeRunner((command, args) => {
+      if (args.includes('rev-parse')) {
+        return { stdout: `${COMMIT}\n` };
+      }
+
+      return command === process.execPath && args.includes('core/tsconfig.builder.json') ? { code: 2 } : undefined;
+    });
+    const { ctx } = makeContext(root, run);
+    const unit = path.join(root, 'watchfaces', 'mosaic');
+
+    const result = unitCheck(ctx, 'typecheck', undefined);
+
+    expect(result).toBe(1);
+    expect(calls.filter((call) => call.command === process.execPath).map((call) => [call.args, call.options.cwd])).toEqual([
+      [[path.join(unit, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', 'core/tsconfig.builder.json', '--noEmit'], unit],
+      [[path.join(unit, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', 'tsconfig.json', '--noEmit'], unit],
+    ]);
+  });
+
   /** One unit that cannot be readied stopped the run, so the units after it were never tested and their failures never seen. */
   test('runs every unit when one cannot be readied', () => {
     const root = makeTree({ 'watchfaces/alpha/paf.config.json': '{}', ...currentUnit('beta') });

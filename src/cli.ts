@@ -35,7 +35,7 @@ usage: paf <command> [args]
   run <unit|face> <script> [args]
                                run any npm script in a unit
   test | lint | typecheck [unit]
-                               run the check in every unit, or one, against its own framework
+                               run the unit's own test or lint script, or tsc on its own tsconfigs, in every unit or one
   doctor                       check git, node, the pins, the SDK, and the workflows
 
 A unit is a folder with a paf.config.json: a family or a face of its own under watchfaces/ or watchapps/,
