@@ -161,6 +161,15 @@ describe('readKeys', () => {
     expect(result[1].key).toEqual({});
   });
 
+  /** A lint entry with no script would have paf lint start node on nothing in every unit that lists the plugin. */
+  test.each(['build', 'lint', 'format'])('refuses a %s entry with no script, naming the file', (name) => {
+    const root = makeTree({ 'paf/package.json': JSON.stringify({ paf: { [name]: {} } }) });
+
+    const result = () => readKeys(root, []);
+
+    expect(result).toThrow(/package\.json names an entry with no script/);
+  });
+
   /** A gen entry with no script only fails later as a run of node with no file, far from the package that named it. */
   test('refuses a generator with no script, naming the file', () => {
     const root = makeTree({ 'paf/package.json': '{ "paf": { "gen": { "clay": { "when": "src/pkjs" } } } }' });

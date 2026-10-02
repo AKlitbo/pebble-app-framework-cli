@@ -1,6 +1,6 @@
 /**
  * The paf keys: what the framework and each plugin a unit lists offer to paf gen, paf check, paf tool,
- * and paf build, read from the paf key in each package.json in the unit's paf/.
+ * paf build, paf lint, and paf format, read from the paf key in each package.json in the unit's paf/.
  *
  * paf reads the keys and never learns what any tool does, so a generator, a check, or a tool the
  * framework adds reaches every unit through its key, with nothing in paf to change.
@@ -23,6 +23,8 @@ export type GenEntry = {
 /** A package's paf key, as far as paf reads it. */
 export type PafKey = {
   build?: { script: string };
+  lint?: { script: string };
+  format?: { script: string };
   gen?: Record<string, GenEntry>;
   check?: string[];
   tools?: Record<string, { script: string }>;
@@ -73,8 +75,10 @@ export function parseKey(text: string, file: string): PafKey {
 
   const scripts: unknown[] = [];
 
-  if (key.build !== undefined) {
-    scripts.push(isObject(key.build) ? key.build.script : undefined);
+  for (const single of [key.build, key.lint, key.format]) {
+    if (single !== undefined) {
+      scripts.push(isObject(single) ? single.script : undefined);
+    }
   }
 
   for (const [group, entries] of [['gen', key.gen], ['tools', key.tools]] as const) {
@@ -149,7 +153,7 @@ export function readKeys(unitDir: string, plugins: string[]): Keyed[] {
  * The message for a name two owners offer, with what to do about it, which depends on which of the two
  * the reader can change.
  *
- * @param noun generator or tool.
+ * @param noun generator, tool, or command.
  * @param name The name both offer.
  * @param first The owner read first, the core before any plugin and any plugin before the unit.
  * @param second The other owner.

@@ -9,7 +9,7 @@ import { build, runScript, unitCheck } from './commands/run.ts';
 import { doctor, status } from './commands/info.ts';
 import { pin } from './commands/pin.ts';
 import { sync, use } from './commands/sync.ts';
-import { check, gen, tool } from './commands/tools.ts';
+import { check, gen, style, tool } from './commands/tools.ts';
 import type { Context } from './shared/context.ts';
 import { cacheHome, findRepoRoot, frameworkRepo } from './shared/home.ts';
 import { spawnRunner } from './shared/runner.ts';
@@ -26,7 +26,7 @@ usage: paf <command> [args]
                                move a unit to another tag, showing the changelog between them first
   use <unit> local [path]      point a unit's paf/ at a local framework clone, builds included
   use <unit> pinned            put it back on its tag
-  build <face|all> [--clean]   build a face in its unit (WSL only), clean when message keys, dependencies, or the framework changed
+  build <face|all> [--clean]   build a face in its unit (not on Windows itself), clean when message keys, dependencies, or the framework changed
   gen <face> <kind|all> [args]
                                run one generator the framework, a listed plugin, or the unit offers for a face,
                                or all it has inputs for
@@ -34,8 +34,9 @@ usage: paf <command> [args]
   tool <face> <name> [args]    run a tool a listed plugin offers, such as clay-preview or tap-walk
   run <unit|face> <script> [args]
                                run any npm script in a unit
-  test | lint | typecheck [unit]
-                               run the unit's own test or lint script, or tsc on its own tsconfigs, in every unit or one
+  test | typecheck [unit]      run the unit's own test script, or tsc on its own tsconfigs, in every unit or one
+  lint [unit] [--fix]          lint a unit with what a listed plugin offers, or its own lint script, in every unit or one
+  format [unit] [--check]      format a unit's files the same way, or with --check say which would change
   doctor                       check git, node, the pins, the unit layout, the SDK, and the workflows
 
 A unit is a folder with a paf.config.json: a family or a face of its own under watchfaces/ or watchapps/,
@@ -61,7 +62,8 @@ const FLAGS: Record<string, string[]> = {
   pin: [],
   use: [],
   test: [],
-  lint: [],
+  lint: ['--fix'],
+  format: ['--check'],
   typecheck: [],
   check: [],
   doctor: [],
@@ -80,6 +82,21 @@ function refuseUnknownFlags(command: string, args: string[]): void {
   }
 }
 
+/** The commands that take one unit, or none for every unit. */
+const ONE_UNIT = ['sync', 'check', 'test', 'typecheck', 'lint', 'format'];
+
+/**
+ * Stops on a second unit. Only the first name is read, so a command given two would run on one and
+ * leave the other looking done.
+ */
+function refuseExtraUnits(command: string, args: string[]): void {
+  const names = args.filter((arg) => !arg.startsWith('-'));
+
+  if (ONE_UNIT.includes(command) && names.length > 1) {
+    throw new Error(`paf ${command} takes one unit and was given ${names.length}: ${names.join(', ')}. Run it once for each, or with none for every unit`);
+  }
+}
+
 function main(argv: string[]): number {
   const [command, ...args] = argv;
 
@@ -89,6 +106,7 @@ function main(argv: string[]): number {
   }
 
   refuseUnknownFlags(command, args);
+  refuseExtraUnits(command, args);
 
   const root = findRepoRoot(process.cwd());
 
@@ -125,8 +143,11 @@ function main(argv: string[]): number {
       return tool(ctx, args[0], args[1], args.slice(2));
     case 'run':
       return runScript(ctx, args[0], args[1], args.slice(2));
-    case 'test':
     case 'lint':
+      return style(ctx, 'lint', args.find((arg) => !arg.startsWith('--')), takeFlag(args, '--fix') ? ['--fix'] : []);
+    case 'format':
+      return style(ctx, 'format', args.find((arg) => !arg.startsWith('--')), takeFlag(args, '--check') ? ['--check'] : []);
+    case 'test':
     case 'typecheck':
       return unitCheck(ctx, command, args[0]);
     case 'doctor':

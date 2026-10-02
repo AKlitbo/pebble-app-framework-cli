@@ -234,7 +234,7 @@ export function doctor(ctx: Context): number {
   say(git.code === 0 ? 'ok' : 'problem', git.code === 0 ? git.stdout.trim() : 'git is not on the PATH');
   say('ok', `node ${ctx.node}`);
 
-  // paf build, gen, check, and tool refuse a unit's scripts under a Node outside its framework's range.
+  // paf build, gen, check, tool, lint, and format refuse a unit's scripts under a Node outside its framework's range.
   // paf/ is read as it is, so a unit whose pin moved since its last sync is sent to paf sync as well
   for (const unit of units) {
     try {

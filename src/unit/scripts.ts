@@ -1,5 +1,6 @@
 /**
- * Running one of the framework's scripts in a unit: a generator, a check, or a tool a paf key names.
+ * Running one of the framework's scripts in a unit: a generator, a check, a tool, or a lint or format
+ * script a paf key names.
  */
 import path from 'node:path';
 import type { Unit } from '../repo/units.ts';

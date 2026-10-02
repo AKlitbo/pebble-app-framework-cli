@@ -1,15 +1,16 @@
 /**
- * paf gen, check, and tool: the commands that run what the framework and a unit's listed plugins offer
- * through their paf keys, each against the unit's own paf/.
+ * paf gen, check, tool, lint, and format: the commands that run what the framework and a unit's listed
+ * plugins offer through their paf keys, each against the unit's own paf/.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { applies, clashMessage, genPlan, notOffered, parseKey, readKeys, type Keyed } from '../framework/keys.ts';
 import { listFolders, mirrorOf, showFile } from '../framework/mirror.ts';
 import { PLUGINS_DIR } from '../framework/ship.ts';
-import { findFace, findUnit } from '../repo/units.ts';
+import { findFace, findUnit, type Unit } from '../repo/units.ts';
 import type { Context } from '../shared/context.ts';
 import { messageOf } from '../shared/errors.ts';
+import { isObject } from '../shared/json.ts';
 import { readStamp, type UnitFramework } from '../unit/framework.ts';
 import { runFrameworkScript } from '../unit/scripts.ts';
 import { readyForScripts, scriptArgs, tryReady } from './run.ts';
@@ -203,4 +204,92 @@ export function tool(ctx: Context, face: string | undefined, name: string | unde
   const [match] = matches;
 
   return runFrameworkScript(ctx, unit, match.dir, match.script, [found.name, ...args]);
+}
+
+/** Whether a unit's package.json has an npm script of a name. One that cannot be read has none. */
+function hasScript(unitDir: string, name: string): boolean {
+  try {
+    const pkg: unknown = JSON.parse(fs.readFileSync(path.join(unitDir, 'package.json'), 'utf8'));
+
+    return isObject(pkg) && isObject(pkg.scripts) && typeof pkg.scripts[name] === 'string';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Lints or formats one unit, and says whether it passed.
+ *
+ * A listed plugin that offers the command runs it. With none, the unit's own npm script of the same name
+ * runs, with the flags after a --. A unit with neither is refused, naming the plugin to list when one its
+ * framework has offers the command, since a run that did nothing and passed would read as clean code.
+ */
+function styleUnit(ctx: Context, unit: Unit, read: UnitFramework, what: 'lint' | 'format', flags: string[]): boolean {
+  const offers = readKeys(unit.dir, read.plugins).flatMap(({ owner, dir, key }) => {
+    const entry = key[what];
+
+    return entry ? [{ owner, dir, script: entry.script }] : [];
+  });
+
+  if (offers.length > 1) {
+    throw new Error(clashMessage('command', what, offers[0].owner, offers[1].owner));
+  }
+
+  if (offers.length === 1) {
+    return runFrameworkScript(ctx, unit, offers[0].dir, offers[0].script, flags) === 0;
+  }
+
+  if (hasScript(unit.dir, what)) {
+    return ctx.run('npm', ['run', what, ...(flags.length ? ['--', ...flags] : [])], { cwd: unit.dir }).code === 0;
+  }
+
+  const owner = unlistedKeys(ctx, unit.dir, read)?.find(({ key }) => key[what] !== undefined);
+
+  throw new Error(owner?.plugin
+    ? `nothing here runs paf ${what}. The ${owner.plugin} plugin offers it, so list it under plugins in paf.config.json and run paf sync`
+    : `nothing here runs paf ${what}. No plugin the unit lists offers it, and its package.json has no ${what} script`);
+}
+
+/**
+ * paf lint [unit] [--fix] and paf format [unit] [--check]
+ *
+ * Runs the lint or the format a listed plugin offers, or the unit's own npm script when none does, in
+ * every unit or one. Every unit runs to the end whether or not another failed, so one failure never hides
+ * the rest.
+ *
+ * @param ctx The command context.
+ * @param what lint or format.
+ * @param target A unit or face, or undefined for every unit.
+ * @param flags The flags to pass on, --fix for lint or --check for format.
+ * @return The exit code.
+ */
+export function style(ctx: Context, what: 'lint' | 'format', target: string | undefined, flags: string[]): number {
+  const units = unitsOf(ctx);
+  const failed: string[] = [];
+
+  for (const unit of target ? [findUnit(units, target)] : units) {
+    ctx.print(`== ${what}: ${unit.where} ==`);
+
+    const read = tryReady(ctx, unit, readyForScripts);
+    let passed = false;
+
+    if (read) {
+      try {
+        passed = styleUnit(ctx, unit, read, what, flags);
+      } catch (error) {
+        ctx.print(`${unit.where}: ${messageOf(error)}`);
+      }
+    }
+
+    if (!passed) {
+      failed.push(unit.where);
+    }
+  }
+
+  if (failed.length) {
+    ctx.print(`${what} failed in ${failed.join(', ')}`);
+    return 1;
+  }
+
+  return 0;
 }

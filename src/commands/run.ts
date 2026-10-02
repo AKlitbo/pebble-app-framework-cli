@@ -1,5 +1,5 @@
 /**
- * paf build, run, test, lint, and typecheck: the commands that run a unit's own npm scripts or the
+ * paf build, run, test, and typecheck: the commands that run a unit's own npm scripts or the
  * framework's build inside a unit, against that unit's paf/.
  */
 import fs from 'node:fs';
@@ -417,13 +417,13 @@ function typecheckUnit(ctx: Context, unit: Unit): boolean {
 }
 
 /**
- * paf test | lint | typecheck [unit]
+ * paf test | typecheck [unit]
  *
- * test and lint run the unit's own npm scripts, and typecheck runs tsc on the unit's own tsconfigs.
+ * test runs the unit's own npm script, and typecheck runs tsc on the unit's own tsconfigs.
  * Every unit runs to the end whether or not another failed, so one failure never hides the rest.
  *
  * @param ctx The command context.
- * @param script test, lint, or typecheck.
+ * @param script test or typecheck.
  * @param target A unit or face, or undefined for every unit.
  * @return The exit code.
  */

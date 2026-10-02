@@ -1,5 +1,5 @@
 /**
- * Specs for paf gen, check, and tool, run against a unit whose paf/ carries the framework's keys.
+ * Specs for paf gen, check, tool, lint, and format, run against a unit whose paf/ carries the framework's keys.
  *
  * Each command decides which scripts run, with what, and from where, and a mistake in any of those
  * shows up as a generator baking the wrong themes, a stale face slipping through a check, or a tool
@@ -12,7 +12,7 @@ import { COMMIT, currentUnit, fakeRunner, makeContext, makeTree, type Call } fro
 import { frameworkPackageHash } from '../unit/framework.ts';
 import { INSTALL_STAMP } from '../unit/install.ts';
 import { SCRIPT_FLAGS } from '../unit/scripts.ts';
-import { check, gen, tool } from './tools.ts';
+import { check, gen, style, tool } from './tools.ts';
 
 /** The keys the framework ships, cut down to what these specs run. */
 const KEYS: Record<string, object> = {
@@ -20,6 +20,8 @@ const KEYS: Record<string, object> = {
   frame: { gen: { background: { script: 'generate-background.ts', when: 'frame/frame.config.json', allArgs: ['--frame', 'all', '--theme', 'all'] } }, check: [] },
   icons: { gen: { icons: { script: 'generate-icons.ts', when: 'resources/icons.json' } }, check: ['check-icons.ts'] },
   dev: { tools: { 'tap-walk': { script: 'tap-walk.ts' } } },
+  'code-style': { lint: { script: 'lint.ts' }, format: { script: 'format.ts' } },
+  'other-style': { lint: { script: 'lint.ts' } },
 };
 
 /**
@@ -291,5 +293,80 @@ describe('tool', () => {
 
     expect(scripts(root, [call])).toEqual([['watchfaces/mosaic/paf/plugins/dev/tap-walk.ts', 'gridlock', '-h', '--', '--out', 'shots']]);
     expect(call.options.capture).toBeUndefined();
+  });
+});
+
+describe('style', () => {
+  /** A lint that ran the unit's own script while a plugin was listed, or lost its --fix, would pass a unit the plugin's rules never saw. */
+  test('runs the listed plugin\'s script from the unit with the flag after it', () => {
+    const { root, ctx, calls } = setUp({ mosaic: keyedUnit('mosaic', ['code-style']) });
+
+    const result = style(ctx, 'lint', undefined, ['--fix']);
+
+    expect(result).toBe(0);
+    expect(scripts(root, calls)).toEqual([['watchfaces/mosaic/paf/plugins/code-style/lint.ts', '--fix']]);
+    expect(calls.filter((call) => call.command === 'npm')).toEqual([]);
+  });
+
+  /** A unit that keeps its own lint script and lists no plugin for it has to keep linting the way it did. */
+  test('runs the unit\'s own script when no listed plugin offers one, with the flag after a --', () => {
+    const unit = keyedUnit('mosaic', ['icons'], { 'package.json': '{ "workspaces": ["paf", "paf/plugins/*"], "scripts": { "lint": "eslint ." } }' });
+    const { root, ctx, calls } = setUp({ mosaic: unit });
+
+    const result = style(ctx, 'lint', undefined, ['--fix']);
+
+    expect(result).toBe(0);
+    expect(scripts(root, calls)).toEqual([]);
+    expect(calls.filter((call) => call.command === 'npm').map((call) => [call.args, call.options.cwd])).toEqual([[['run', 'lint', '--', '--fix'], path.join(root, 'watchfaces', 'mosaic')]]);
+  });
+
+  /** Picking one of two linters unasked would pass a unit on rules its owner never chose. */
+  test('refuses two listed plugins that both offer it, naming both', () => {
+    const { ctx, calls, printed } = setUp({ mosaic: keyedUnit('mosaic', ['code-style', 'other-style']) });
+
+    const result = style(ctx, 'lint', undefined, []);
+
+    expect(result).toBe(1);
+    expect(calls.filter((call) => call.command === process.execPath)).toEqual([]);
+    expect(printed).toContain('watchfaces/mosaic: the command lint is offered by both the code-style plugin and the other-style plugin, so paf cannot tell which to run. List only one of the two plugins');
+  });
+
+  /** A run that did nothing and passed would read as formatted files when nothing had looked at them. */
+  test('fails a unit that has neither a plugin nor a script for it', () => {
+    const { ctx, calls, printed } = setUp({ mosaic: keyedUnit('mosaic', ['icons']) });
+
+    const result = style(ctx, 'format', undefined, ['--check']);
+
+    expect(result).toBe(1);
+    expect(calls.filter((call) => call.command === process.execPath || call.command === 'npm')).toEqual([]);
+    expect(printed.some((line) => line.startsWith('watchfaces/mosaic: nothing here runs paf format.'))).toBe(true);
+    expect(printed).toContain('format failed in watchfaces/mosaic');
+  });
+
+  /** A unit that leaves the plugin out has to be told which one to list, or the refusal sends its owner looking for a script to write. */
+  test('names the plugin to list when one the unit leaves out offers it', () => {
+    // the tag in the mirror has the code-style plugin, which the unit leaves out of paf/
+    const { ctx, printed } = setUp({ mosaic: keyedUnit('mosaic', []) }, undefined, (args) => {
+      if (args.includes('ls-tree')) {
+        return 'src/plugins/code-style\0';
+      }
+
+      return args.includes(`${COMMIT}:src/plugins/code-style/package.json`) ? JSON.stringify({ paf: KEYS['code-style'] }) : undefined;
+    });
+
+    const result = style(ctx, 'lint', undefined, []);
+
+    expect(result).toBe(1);
+    expect(printed).toContain('watchfaces/mosaic: nothing here runs paf lint. The code-style plugin offers it, so list it under plugins in paf.config.json and run paf sync');
+  });
+
+  /** paf format reads its own entry, so a plugin's format script must not be reached through its lint one. */
+  test('runs the format script for paf format, with --check after it', () => {
+    const { root, ctx, calls } = setUp({ mosaic: keyedUnit('mosaic', ['code-style']) });
+
+    const result = style(ctx, 'format', undefined, ['--check']);
+
+    expect(result).toBe(0);
+    expect(scripts(root, calls)).toEqual([['watchfaces/mosaic/paf/plugins/code-style/format.ts', '--check']]);
   });
 });

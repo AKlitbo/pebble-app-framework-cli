@@ -19,7 +19,7 @@ watchfaces/mosaic/
   paf.config.json     the framework tag, its plugins, and the unit's own generators
   package.json        the unit's scripts, with workspaces: ["paf", "paf/plugins/*"]
   package-lock.json
-  config/             the unit's own tsconfigs, eslint.config.ts, and vitest.config.ts
+  config/             the unit's own tsconfigs and vitest.config.ts
   tsconfig.json       "files": [] and a reference to each tsconfig in config/, so an editor finds them
   .gitignore          paf/, paf.paf-*/, node_modules/, targets/
   paf/                the framework, filled by paf sync
@@ -56,8 +56,10 @@ watchfaces/mosaic/
 | `paf gen <face> <kind\|all> [args]` | Runs one generator the framework, a listed plugin, or the unit offers for a face, or every one the face has inputs for, in order. |
 | `paf check [unit]` | Runs every check the framework and the listed plugins ship, in every unit or one. |
 | `paf tool <face> <name> [args]` | Runs a tool a listed plugin offers, such as `clay-preview` or `tap-walk`, with every argument after the name as typed. |
-| `paf run <unit\|face> <script> [args]` | Runs any npm script in a unit. It is for the unit's own scripts, since the framework's tools run through `paf build`, `gen`, `check`, and `tool`. |
-| `paf test`, `lint`, `typecheck` `[unit]` | Runs the unit's own `test` or `lint` script, or `tsc` on every tsconfig in the unit outside `paf/`, `targets/`, and `node_modules/`, in every unit or one. |
+| `paf run <unit\|face> <script> [args]` | Runs any npm script in a unit. It is for the unit's own scripts, since the framework's tools run through `paf build`, `gen`, `check`, `tool`, `lint`, and `format`. |
+| `paf test`, `typecheck` `[unit]` | Runs the unit's own `test` script, or `tsc` on every tsconfig in the unit outside `paf/` and its swap folders, `targets/`, `node_modules/`, `vendor/`, `coverage/`, and dot folders other than `.github/`, in every unit or one. |
+| `paf lint [unit] [--fix]` | Lints a unit with what a listed plugin offers, which is the framework's `code-style` plugin, or with the unit's own `lint` script when no listed plugin does. A unit with neither fails. |
+| `paf format [unit] [--check]` | Formats a unit's files the same way. With the `code-style` plugin that is Prettier over its CSS, JSON, and YAML, once the unit turns it on. `--check` says which files would change and writes none. |
 | `paf doctor` | Checks git, Node, the pins, the unit layout, the SDK against each tag's `toolchain.json`, and the workflows. |
 
 ## The Framework's Side
@@ -65,8 +67,8 @@ watchfaces/mosaic/
 `paf` reads what it needs from the framework at each unit's tag.
 
 * `src/` is what a unit gets in `paf/`, leaving out every `*.spec.ts`, `*.spec.c`, and `fixtures/` folder, and every plugin under `src/plugins/` the unit does not list.
-* The `paf` key in `src/package.json` and in each plugin's `package.json` names the build script, the generators, the checks, and the tools. `paf` runs the scripts the keys name and never learns what any of them does, so a generator, a check, or a tool the framework adds reaches a unit through its key, once the unit is on a tag that has it and lists its plugin.
-* `engines.node` in `src/package.json` is the Node range `paf build`, `gen`, `check`, and `tool` refuse to run outside.
+* The `paf` key in `src/package.json` and in each plugin's `package.json` names the build script, the generators, the checks, the tools, and the lint and format scripts. `paf` runs the scripts the keys name and never learns what any of them does, so a generator, a check, or a tool the framework adds reaches a unit through its key, once the unit is on a tag that has it and lists its plugin.
+* `engines.node` in `src/package.json` is the Node range `paf build`, `gen`, `check`, `tool`, `lint`, and `format` refuse to run outside.
 * `toolchain.json` at the top of `paf/` records the SDK, the pebble-tool, and the Node major the tag was built with.
 
 The toolchain carries a `format` number, and `paf` keeps reading every format a supported tag uses, since a unit can stay on an old tag for years.
