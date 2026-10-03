@@ -23,7 +23,7 @@ usage: paf <command> [args]
                                fill each unit's paf/ from its pinned tag and install its node_modules
   status                       each unit's faces, tag, the newest framework 4 tag, and whether it is ready
   pin <unit> <tag|latest>
-                               move a unit to another tag, showing the changelog between them first
+                               move a unit to another tag and fill its paf/, printing the breaking entries between them first
   use <unit> local [path]      point a unit's paf/ at a local framework clone, builds included
   use <unit> pinned            put it back on its tag
   build <face|all> [--clean]   build a face in its unit (not on Windows itself), clean when message keys, dependencies, or the framework changed
