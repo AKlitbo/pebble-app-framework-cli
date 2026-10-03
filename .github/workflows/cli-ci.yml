@@ -40,7 +40,7 @@ jobs:
         run: npm ci
 
       - name: Test
-        uses: AKlitbo/pebble-app-framework/.github/actions/verify-vitest@v3.0.0
+        uses: AKlitbo/pebble-app-framework/.github/actions/verify-vitest@v4.0.0
         with:
           config: vitest.config.ts
 
@@ -84,7 +84,7 @@ jobs:
         run: npm ci
 
       - name: Lint
-        uses: AKlitbo/pebble-app-framework/.github/actions/verify-eslint@v3.0.0
+        uses: AKlitbo/pebble-app-framework/.github/actions/verify-eslint@v4.0.0
         with:
           config: eslint.config.ts
 
@@ -106,7 +106,7 @@ jobs:
         run: npm ci
 
       - name: Typecheck
-        uses: AKlitbo/pebble-app-framework/.github/actions/verify-typecheck@v3.0.0
+        uses: AKlitbo/pebble-app-framework/.github/actions/verify-typecheck@v4.0.0
         with:
           projects: |
             tsconfig.json
