@@ -2,7 +2,9 @@
 
 The `paf` command pins each family or face in a repo to its own [pebble-app-framework](https://github.com/AKlitbo/pebble-app-framework) version, and builds and checks it against that version. Moving one family to a new framework leaves every other unit on the tag it already has.
 
-`paf` never wraps `pebble`. Installing an app, the emulator, logs, screenshots, and SDK installs are all `pebble` commands.
+`paf build` runs `pebble build` for you, once the framework's build script has staged the face into `targets/`. Every other `pebble` command is yours to run the usual way, such as installing an app, the emulator, logs, screenshots, and SDK installs.
+
+The [paf pages](https://aklitbo.github.io/pebble-app-framework/main/paf/) on the framework's docs site cover each command with examples, common workflows, and troubleshooting.
 
 ## Install
 
