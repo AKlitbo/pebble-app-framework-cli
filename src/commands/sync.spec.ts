@@ -584,8 +584,8 @@ describe('installUnit on a local framework', () => {
 
 describe('installUnit and the lock', () => {
 
-  /** A lock that is right gets installed as it is, and one behind the framework is brought up, both by npm install outside CI. */
-  test('uses npm install outside CI', () => {
+  /** A lock that is right gets installed as it is, and one behind the framework is brought up, both by npm install without --locked. */
+  test('uses npm install without --locked', () => {
     const unit = unitWith({ 'watchfaces/ide-vscode/package-lock.json': '{}' });
     const { run, calls } = fakeRunner((command) => {
       if (command === 'npm') {

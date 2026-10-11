@@ -120,7 +120,7 @@ export function checkUnit(ctx: Context, unit: Unit, options: SyncOptions): void 
  * framework's or a plugin's, changed since the last install. npm reads nothing else in paf/, so an edit
  * to a local framework's code never costs an install, and listing or dropping a plugin does.
  *
- * Outside CI it runs npm install, which installs what the lock records and only changes the lock when
+ * Without --locked it runs npm install, which installs what the lock records and only changes the lock when
  * a package.json asks for something it lacks, such as a framework that moved. A --locked run uses npm
  * ci, which never writes the lock and stops with npm's own message when the lock is out of step, so a
  * lock nobody updated fails CI rather than being rewritten there. The caller runs checkUnit first.
