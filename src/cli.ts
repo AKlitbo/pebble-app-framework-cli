@@ -21,7 +21,7 @@ usage: paf <command> [args]
 
   sync [unit] [--locked] [--force]
                                fill each unit's paf/ from its pinned tag and install its node_modules
-  status                       each unit's faces, tag, the newest framework 4 tag, and whether it is ready
+  status                       each unit's faces, tag, the newest framework tag, and whether it is ready
   pin <unit> <tag|latest>
                                move a unit to another tag and fill its paf/, printing the breaking entries between them first
   use <unit> local [path]      point a unit's paf/ at a local framework clone, builds included

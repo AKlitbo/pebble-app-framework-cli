@@ -12,8 +12,8 @@ inputs:
   node-version:
     description: >
       The Node version to install. paf and the framework's tools run under it too, so it has to be inside
-      the range engines.node names in paf/package.json, which on framework 4 is 22.18 or later on Node 22,
-      or 24.2 or later. A unit's framework records the Node major it is built with in paf/toolchain.json,
+      the range engines.node names in paf/package.json, which on framework 4 and 5 is 22.18 or later on
+      Node 22, or 24.2 or later. A unit's framework records the Node major it is built with in paf/toolchain.json,
       and keeping this the same keeps the install on the Node the framework was tested with.
     required: false
     default: '24'

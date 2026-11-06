@@ -13,15 +13,15 @@ import { isObject, isScript } from '../shared/json.ts';
 export const CONFIG_FILE = 'paf.config.json';
 
 /**
- * The framework major this paf fills. Each paf major pairs with one framework major: paf 1.0.0 fills
- * framework 3, this paf framework 4, and a later framework needs a later paf. Nothing fills a framework
- * older than 3.
+ * The oldest framework major this paf fills. paf reads the framework's layout, `src/` copied into a
+ * unit's `paf/` with its plugins and tools, which framework 4 settled, so it fills framework 4 and every
+ * later framework that keeps that layout. paf 1.0.0 fills framework 3, and nothing fills an older one.
  */
-export const FRAMEWORK_MAJOR = 4;
+export const FRAMEWORK_MIN_MAJOR = 4;
 
 /**
  * Why this paf cannot fill a framework tag, or null when it can. A tag has to be a version tag of
- * framework 4.
+ * framework 4 or later.
  *
  * @param tag The tag.
  * @return The tag and why, such as "v3.0.0, which is framework 3 and needs paf 1.0.0", or null.
@@ -37,29 +37,29 @@ export function unfillable(tag: string): string | null {
     return `${tag}, which is framework 3 and needs paf 1.0.0`;
   }
 
-  if (major < FRAMEWORK_MAJOR) {
+  if (major < FRAMEWORK_MIN_MAJOR) {
     return `${tag}, which is framework ${major} and older than any paf fills`;
   }
 
-  return major > FRAMEWORK_MAJOR ? `${tag}, which is framework ${major} and needs a newer paf` : null;
+  return null;
 }
 
 /**
  * The tags this paf can fill, out of every tag the framework has.
  *
  * @param tags Every tag.
- * @return The framework 4 version tags.
+ * @return The version tags of framework 4 and later.
  */
 export function fillableTags(tags: string[]): string[] {
   return tags.filter((tag) => unfillable(tag) === null);
 }
 
 /**
- * The tag latest means: the newest framework 4 release, or while framework 4 has only candidates, the
- * newest of those rather than a release of another framework this paf would refuse.
+ * The tag latest means: the newest release paf fills, or while there are only candidates, the newest
+ * of those rather than a framework 3 release this paf would refuse.
  *
  * @param tags Every tag.
- * @return The tag, or null when there is no framework 4 tag.
+ * @return The tag, or null when there is no tag of framework 4 or later.
  */
 export function latestTag(tags: string[]): string | null {
   return newestTag(fillableTags(tags));
@@ -232,7 +232,7 @@ export function readConfig(dir: string): UnitConfig {
   const why = unfillable(config.framework);
 
   if (why) {
-    throw new Error(`${file} pins ${why}. This paf fills framework ${FRAMEWORK_MAJOR}, so move the unit to a framework ${FRAMEWORK_MAJOR} tag with paf pin`);
+    throw new Error(`${file} pins ${why}. This paf fills framework ${FRAMEWORK_MIN_MAJOR} and later, so move the unit to one of those tags with paf pin`);
   }
 
   return config;

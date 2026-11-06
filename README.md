@@ -11,12 +11,12 @@ The [paf pages](https://aklitbo.github.io/pebble-app-framework/main/paf/) on the
 Each release on GitHub carries the built package. Install it with npm, in WSL and on Windows alike:
 
 ```sh
-npm i -g https://github.com/AKlitbo/pebble-app-framework-cli/releases/download/v2.0.0/pebble-app-framework-cli-2.0.0.tgz
+npm i -g https://github.com/AKlitbo/pebble-app-framework-cli/releases/download/v2.1.0/pebble-app-framework-cli-2.1.0.tgz
 ```
 
-`paf` needs Node 22.18 or later with the npm it ships with, and `git`. It has no runtime dependencies. The framework's tools need the Node range in its `engines.node`, which on framework 4 is 22.18 or later on Node 22, or 24.2 or later.
+`paf` needs Node 22.18 or later with the npm it ships with, and `git`. It has no runtime dependencies. The framework's tools need the Node range in its `engines.node`, which on framework 4 and 5 is 22.18 or later on Node 22, or 24.2 or later.
 
-`paf 2.0.0` fills framework 4 tags only. A unit on framework 3 needs `paf 1.0.0`.
+`paf 2.1.0` fills framework 4 and every later framework that keeps its layout. A unit on framework 3 needs `paf 1.0.0`.
 
 ## Units
 
@@ -65,7 +65,7 @@ Wherever a command takes `[unit]`, a face name works too and picks the unit that
 | Command | What it does |
 | :-- | :-- |
 | `paf sync [unit] [--locked] [--force]` | Fills each unit's `paf/` from its tag and installs its `node_modules`. `--locked` is for CI. It installs from the lock with `npm ci` and stops rather than write `paf.config.json` or the lock. `--force` reinstalls a `node_modules` made on the other system. |
-| `paf status` | Shows each unit's faces, its tag, the newest framework 4 tag, and whether it is ready. |
+| `paf status` | Shows each unit's faces, its tag, the newest framework tag, and whether it is ready. |
 | `paf pin <unit> <tag\|latest>` | Moves a unit to another tag and fills its `paf/`. It prints the breaking entries in the framework changelog between the two tags, and counts the rest. |
 | `paf use <unit> local [path]`, `paf use <unit> pinned` | Fills a unit's `paf/` from a local framework clone, uncommitted edits included. `pinned` puts it back on its tag. |
 | `paf build <face\|all> [--clean]` | Builds a face, or every face, through the framework's `tools/build.ts`. It builds clean when the face's keys, dependencies, or framework changed. It runs on Linux, WSL, or macOS, not on Windows itself. |
@@ -89,10 +89,10 @@ A unit generator's `script` is a `.ts` file, with its path from the unit.
 
 ## CI
 
-The sync action installs `paf 2.0.0` and runs `paf sync --locked` in a face repo's workflow. Load it at the release tag:
+The sync action installs `paf 2.1.0` and runs `paf sync --locked` in a face repo's workflow. Load it at the release tag:
 
 ```yaml
-- uses: AKlitbo/pebble-app-framework-cli/.github/actions/sync@v2.0.0
+- uses: AKlitbo/pebble-app-framework-cli/.github/actions/sync@v2.1.0
   with:
     face: gridlock
 ```
@@ -116,7 +116,7 @@ A unit's `node_modules` holds native binaries for one system. `paf sync` from Wi
 * `src/` is the folder copied into each unit's `paf/`.
 * The `paf` key in `src/package.json` and in each plugin's `package.json` names the build script, the generators, the checks, the tools, and the lint and format scripts. `paf` runs whatever the keys name, so a new generator, check, or tool reaches a unit once the unit pins a tag that has it, and lists its plugin when a plugin offers it.
 * `engines.node` in `src/package.json` is the Node range `paf build`, `gen`, `check`, `tool`, `lint`, and `format` refuse to run outside.
-* `toolchain.json` at the top of `paf/` records the SDK, the pebble-tool, and the Node major the tag was built with, under a `format` number `paf` reads for every framework 4 tag.
+* `toolchain.json` at the top of `paf/` records the SDK, the pebble-tool, and the Node major the tag was built with, under a `format` number `paf` reads for every tag it fills.
 
 ## Development
 

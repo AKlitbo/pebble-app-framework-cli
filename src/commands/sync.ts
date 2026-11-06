@@ -200,7 +200,7 @@ export function syncUnit(ctx: Context, unit: Unit, options: SyncOptions, read?: 
 
     // a clone checked out on a framework 3 branch has no src/ to copy
     if (!isFrameworkClone(clone)) {
-      throw new Error(`${unit.rel}/paf was copied from ${clone}, which no longer holds a framework 4 clone, since its src/package.json does not name pebble-app-framework. Check out a framework 4 branch there, or run paf use ${unit.name} pinned`);
+      throw new Error(`${unit.rel}/paf was copied from ${clone}, which no longer holds a framework clone of 4 or later, since its src/package.json does not name pebble-app-framework. Check out a branch of framework 4 or later there, or run paf use ${unit.name} pinned`);
     }
 
     const copied = fillFromClone(ctx.run, clone, unit.dir, framework.plugins);

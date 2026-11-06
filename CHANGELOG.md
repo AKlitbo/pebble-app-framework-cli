@@ -2,6 +2,12 @@
 
 All notable changes to paf are recorded here, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+
+- `paf pin`, `paf sync`, and every command that readies a unit now take a tag from framework 4 or any later framework, where they refused anything past framework 4. paf reads only the layout framework 4 settled, `src/` copied into `paf/` with its plugins and tools, so a later framework that keeps it needs no new paf. `latest` is now the newest such release, so `paf pin <unit> latest` moves a unit to framework 5.0.0. A framework 3 tag still needs `paf 1.0.0`.
+
 ## [2.0.0] - 2026-10-02
 
 ### Added

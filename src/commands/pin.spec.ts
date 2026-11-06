@@ -227,7 +227,7 @@ describe('pin', () => {
 
     const result = () => pin(ctx, 'mosaic', 'v3.0.0');
 
-    expect(result).toThrow(/^cannot pin v3\.0\.0, which is framework 3 and needs paf 1\.0\.0\. This paf pins framework 4 tags/);
+    expect(result).toThrow(/^cannot pin v3\.0\.0, which is framework 3 and needs paf 1\.0\.0\. This paf pins framework 4 and later tags/);
     expect(printed).toEqual([]);
     expect(fs.readFileSync(path.join(root, 'watchfaces', 'mosaic', 'paf.config.json'), 'utf8')).toBe(PIN);
   });
@@ -236,7 +236,7 @@ describe('pin', () => {
    * Until framework 4 has a release, the newest release is a framework 3 one. latest read it as the
    * target, so a unit on a framework 4 candidate was refused rather than left where it was.
    */
-  test('takes latest from framework 4 tags only', () => {
+  test('takes latest from the tags paf fills only', () => {
     const root = repoWith(currentUnit('mosaic', 'v4.1.0-rc.27'));
     const { run } = fakeRunner((command, args) => {
       if (args.includes('tag')) {
@@ -265,14 +265,14 @@ describe('pin', () => {
     expect(JSON.parse(fs.readFileSync(path.join(root, 'watchfaces', 'mosaic', 'paf.config.json'), 'utf8')).framework).toBe('v4.2.0');
   });
 
-  /** A framework 5 is laid out for a later paf, and pinning it here would fill the unit with files this paf cannot run. */
-  test('refuses a tag from a later framework', () => {
+  /** Framework 5 keeps framework 4's layout, and refusing it left every unit stuck on 4 until a new paf shipped. */
+  test('pins a tag from a later framework', () => {
     const root = repoWith();
-    const { ctx } = makeContext(root, tagged.run);
+    const { ctx } = makeContext(root, syncingRun(root));
 
-    const result = () => pin(ctx, 'mosaic', 'v5.0.0');
+    pin(ctx, 'mosaic', 'v5.0.0');
 
-    expect(result).toThrow(/^cannot pin v5\.0\.0, which is framework 5 and needs a newer paf/);
+    expect(JSON.parse(fs.readFileSync(path.join(root, 'watchfaces', 'mosaic', 'paf.config.json'), 'utf8')).framework).toBe('v5.0.0');
   });
 
   /** paf 1.0.0 fills framework 3 only, so telling someone on framework 2 to fetch it sent them to a paf that refuses them too. */
@@ -285,9 +285,9 @@ describe('pin', () => {
     expect(result).toThrow(/^cannot pin v2\.2\.0, which is framework 2 and older than any paf fills/);
   });
 
-  /** A unit on framework 5 was told it stays on latest, then refused by the sync straight after, with no way off it through latest. */
-  test('moves a unit on a later framework back to latest rather than keeping it', () => {
-    const root = repoWith({ 'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v5.0.0', commit: COMMIT }) });
+  /** latest is the newest release paf fills, so a framework 5 release is the target over the older framework 4 one. */
+  test('takes latest from the newest framework rather than the oldest it fills', () => {
+    const root = repoWith({ 'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v4.2.0', commit: COMMIT }) });
     const run = fakeRunner((command, args) => {
       if (command === 'npm') {
         fs.mkdirSync(path.join(root, 'watchfaces', 'mosaic', 'node_modules'), { recursive: true });
@@ -303,7 +303,7 @@ describe('pin', () => {
 
     pin(ctx, 'mosaic', 'latest');
 
-    expect(JSON.parse(fs.readFileSync(path.join(root, 'watchfaces', 'mosaic', 'paf.config.json'), 'utf8')).framework).toBe('v4.2.0');
+    expect(JSON.parse(fs.readFileSync(path.join(root, 'watchfaces', 'mosaic', 'paf.config.json'), 'utf8')).framework).toBe('v5.0.0');
   });
 
   /**

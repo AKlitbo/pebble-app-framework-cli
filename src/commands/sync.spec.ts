@@ -175,7 +175,7 @@ describe('syncUnit', () => {
 
     const result = () => syncUnit(ctx, unit, { locked: false, force: false });
 
-    expect(result).toThrow(/pins v3\.0\.0, which is framework 3 and needs paf 1\.0\.0\. This paf fills framework 4, so move the unit to a framework 4 tag with paf pin/);
+    expect(result).toThrow(/pins v3\.0\.0, which is framework 3 and needs paf 1\.0\.0\. This paf fills framework 4 and later, so move the unit to one of those tags with paf pin/);
     expect(calls).toEqual([]);
   });
 
@@ -468,7 +468,7 @@ describe('paf/ swaps', () => {
   });
 
   /** A clone switched to a framework 3 branch has no src/, and the sync failed with a git error that read as git not being installed. */
-  test('explains a local clone that no longer holds framework 4', () => {
+  test('explains a local clone that no longer holds framework 4 or later', () => {
     const clone = makeTree({ 'package.json': '{ "name": "pebble-app-framework" }' });
     const unit = unitWith({
       'watchfaces/ide-vscode/paf.config.json': JSON.stringify({ framework: 'v4.1.0', commit: COMMIT }),
@@ -478,7 +478,7 @@ describe('paf/ swaps', () => {
 
     const result = () => syncUnit(ctx, unit, { locked: false, force: false });
 
-    expect(result).toThrow(/no longer holds a framework 4 clone.*or run paf use ide-vscode pinned/);
+    expect(result).toThrow(/no longer holds a framework clone of 4 or later.*or run paf use ide-vscode pinned/);
   });
 
   /** A clone path recorded from PowerShell reached git in WSL, which failed with nothing to say the path came from the other system. */

@@ -190,7 +190,7 @@ export function status(ctx: Context): number {
     ctx.print(line);
   }
 
-  ctx.print('LATEST is the newest framework 4 tag as of the last fetch, a release when there is one, and paf sync fetches again.');
+  ctx.print('LATEST is the newest framework tag paf fills as of the last fetch, a release when there is one, and paf sync fetches again.');
 
   const pebble = activePebble(ctx);
   const built = [...toolchainsByFramework(units, new Map(units.map((unit) => [unit, toolchainOf(unit)]))).entries()].map(([framework, { toolchain }]) => `${framework} was built with ${toolchain.sdk}`);
@@ -270,7 +270,7 @@ export function doctor(ctx: Context): number {
     }
 
     if (leftoverLib(unit.dir)) {
-      say('problem', `${unit.rel}/lib is left from paf 1.0.0, which filled it. Delete it, since paf 2.0.0 fills paf/`);
+      say('problem', `${unit.rel}/lib is left from paf 1.0.0, which filled it. Delete it, since paf 2.0.0 and later fill paf/`);
     }
 
     const oldAppinfo = oldAppinfoProblem(unit.dir, unit.rel);

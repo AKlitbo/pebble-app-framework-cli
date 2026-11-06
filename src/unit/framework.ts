@@ -237,8 +237,9 @@ export function unitFramework(unitDir: string, repin = false): UnitFramework {
 }
 
 /**
- * Whether a folder holds a framework 4 clone, whose src/package.json names pebble-app-framework. The
- * root package.json is the repo the framework is developed in, and a framework 3 checkout has no src/.
+ * Whether a folder holds a framework clone of 4 or later, whose src/package.json names
+ * pebble-app-framework. The root package.json is the repo the framework is developed in, and a
+ * framework 3 checkout has no src/.
  *
  * @param source The folder.
  * @return Whether it does.

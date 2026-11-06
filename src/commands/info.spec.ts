@@ -87,7 +87,7 @@ describe('unitState', () => {
 
 describe('status', () => {
   /** With only framework 3 releases out, LATEST offered one that paf pin refuses, beside a unit on a framework 4 candidate. */
-  test('shows the latest framework 4 tag, not a framework 3 release', () => {
+  test('shows the latest tag paf fills, not a framework 3 release', () => {
     const root = makeTree({ 'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v4.1.0-rc.27', commit: 'a'.repeat(40) }) });
     const { ctx, printed } = makeContext(root, fakeRunner((command, args) => (args.includes('tag') ? { stdout: 'v3.1.0\nv4.1.0-rc.27\n' } : undefined)).run);
 
@@ -146,7 +146,7 @@ describe('doctor', () => {
   ])('names a lib/ left from paf 1.0.0, known by %s', (file, text) => {
     const result = problemsWith({ [`watchfaces/mosaic/${file}`]: text });
 
-    expect(result.problems).toEqual(['problem  watchfaces/mosaic/lib is left from paf 1.0.0, which filled it. Delete it, since paf 2.0.0 fills paf/']);
+    expect(result.problems).toEqual(['problem  watchfaces/mosaic/lib is left from paf 1.0.0, which filled it. Delete it, since paf 2.0.0 and later fill paf/']);
   });
 
   /** A unit with a face's appinfo still in config/ read as ready and passed doctor, while sync, build, and check all stopped on it. */

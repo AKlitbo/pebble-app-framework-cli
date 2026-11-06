@@ -5,7 +5,7 @@ import { breakingEntries, sectionsBetween } from '../framework/changelog.ts';
 import { listFolders, listTags, mirrorOf, resolveRef, showFile, updateMirror } from '../framework/mirror.ts';
 import { PLUGINS_DIR, SHIP_ROOT, shipPathspecs } from '../framework/ship.ts';
 import { compareTags, isVersionTag } from '../framework/tags.ts';
-import { FRAMEWORK_MAJOR, fillableTags, latestTag, readConfigIfSet, readListed, unfillable, writePin } from '../unit/config.ts';
+import { FRAMEWORK_MIN_MAJOR, fillableTags, latestTag, readConfigIfSet, readListed, unfillable, writePin } from '../unit/config.ts';
 import { findUnit, unitFaces } from '../repo/units.ts';
 import type { Context } from '../shared/context.ts';
 import { readStamp } from '../unit/framework.ts';
@@ -36,33 +36,33 @@ export function pin(ctx: Context, target: string | undefined, wanted: string | u
   const tag = wanted === 'latest' ? latestTag(tags) : wanted;
 
   if (!tag) {
-    throw new Error(`the framework has no framework ${FRAMEWORK_MAJOR} tag for latest yet`);
+    throw new Error(`the framework has no tag of framework ${FRAMEWORK_MIN_MAJOR} or later for latest yet`);
   }
 
   // the hint only offers tags this paf can pin
   const recent = fillableTags(tags).sort(compareTags).reverse().slice(0, 5).join(', ') || 'none yet';
-  // a pin has to be a framework 4 version tag, since the changelog it prints, latest, and the tag order
-  // all read it as one. it is checked before the mirror is asked for its commit, and before anything is
+  // a pin has to be a version tag of framework 4 or later, since the changelog it prints, latest, and
+  // the tag order all read it as one. it is checked before the mirror is asked for its commit, and before anything is
   // printed or written
   const why = unfillable(tag);
 
   if (why) {
-    throw new Error(`cannot pin ${why}. This paf pins framework ${FRAMEWORK_MAJOR} tags. Recent ones: ${recent}`);
+    throw new Error(`cannot pin ${why}. This paf pins framework ${FRAMEWORK_MIN_MAJOR} and later tags. Recent ones: ${recent}`);
   }
 
   const commit = resolveRef(ctx.run, mirror, tag);
 
   if (!commit) {
-    throw new Error(`the framework has no tag ${tag}. Recent framework ${FRAMEWORK_MAJOR} tags: ${recent}`);
+    throw new Error(`the framework has no tag ${tag}. Recent tags paf can pin: ${recent}`);
   }
 
   // a unit whose paf.config.json names no framework yet is taking its first pin
   const old = readConfigIfSet(unit.dir);
 
   // a unit already past latest, such as one on a newer candidate, stays rather than moving back to an
-  // older framework. one past it on a framework this paf cannot fill, or on a tag this mirror lacks, such
-  // as a candidate cut in a local clone, moves back to latest instead, since staying would leave it on a
-  // pin the sync straight after refuses
+  // older framework. one past it on a tag this mirror lacks, such as a candidate cut in a local clone,
+  // or on a pin that is not a version tag, moves back to latest instead, since staying would leave it
+  // on a pin the sync straight after refuses
   const stays = old !== null && wanted === 'latest' && unfillable(old.framework) === null && compareTags(tag, old.framework) < 0;
   // a unit on a local framework builds from its clone whatever it pins, so it is described by the clone
   const local = readStamp(unit.dir)?.local;
