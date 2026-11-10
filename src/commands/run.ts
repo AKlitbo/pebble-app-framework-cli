@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { mirrorOf, resolveRef, updateMirror } from '../framework/mirror.ts';
-import { allFaces, findFace, findUnit, APPINFO_REL, type Located, type Unit } from '../repo/units.ts';
+import { allFaces, findFace, findUnit, pluginApps, APPINFO_REL, type Located, type Unit } from '../repo/units.ts';
 import type { Context } from '../shared/context.ts';
 import { lockHash } from '../unit/install.ts';
 import { FRAMEWORK_DIR, configureIdentity, unitFramework, type UnitFramework } from '../unit/framework.ts';
@@ -27,11 +27,12 @@ const fetched = new Set<string>();
  *
  * @param ctx The command context.
  * @param unit The unit.
+ * @param apps The unit's plugin apps, when the caller has read them already.
  * @return What the unit builds from, read before the sync, which leaves its pin and plugins as they were.
  */
-export function ready(ctx: Context, unit: Unit): UnitFramework {
+export function ready(ctx: Context, unit: Unit, apps?: string[]): UnitFramework {
   // a pin this paf cannot fill stops here, before the mirror is asked
-  const read = unitFramework(unit.dir);
+  const read = unitFramework(unit.dir, false, apps);
 
   // so does a unit the sync would refuse, since offline a fetch error would come first and hide what
   // to fix
@@ -68,10 +69,11 @@ export function ready(ctx: Context, unit: Unit): UnitFramework {
  * @param unit The unit.
  * @param named Whether the refusal names the unit, for a command that does not name it already. tryReady
  * puts the unit in front of whatever it prints.
+ * @param apps The unit's plugin apps, when the caller has read them already.
  * @return What the unit builds from.
  */
-export function readyForScripts(ctx: Context, unit: Unit, named = false): UnitFramework {
-  const read = ready(ctx, unit);
+export function readyForScripts(ctx: Context, unit: Unit, named = false, apps?: string[]): UnitFramework {
+  const read = ready(ctx, unit, apps);
   const wrong = wrongNode(frameworkEngines(unit.dir), ctx.node, named ? `${unit.rel === '.' ? '' : `${unit.rel}/`}paf/package.json` : 'paf/package.json');
 
   if (wrong) {
@@ -173,8 +175,8 @@ function readBuildState(unit: Unit): Record<string, BuildInputs> {
  * once when either fails, so build all carries on to the next unit. Only the core's key is read, since
  * a build never runs anything a plugin offers, and a plugin's broken key should not stop it.
  */
-function unitBuildOf(ctx: Context, unit: Unit): UnitBuild | null {
-  if (!tryReady(ctx, unit, readyForScripts)) {
+function unitBuildOf(ctx: Context, unit: Unit, apps: string[]): UnitBuild | null {
+  if (!tryReady(ctx, unit, () => readyForScripts(ctx, unit, false, apps))) {
     return null;
   }
 
@@ -210,6 +212,9 @@ function runIn(ctx: Context, unit: Unit, command: string, args: string[]): boole
  * @param args Arguments for the framework's build script, which passes all but --clean and --dev on to
  * pebble build. --clean forces a clean build, and --dev builds in dev mode on framework 6 or later.
  * paf hands --dev on as it is, so an older framework passes it to pebble build, which refuses it.
+ * build all --dev passes over a plugin app with a line saying so, since it has no watch code for dev
+ * mode to change and the framework stops on one built with --dev. Its unit is still readied first, so a
+ * unit holding only plugin apps on a pin before framework 6 is refused as it is without --dev.
  * @return The exit code.
  */
 export function build(ctx: Context, target: string | undefined, args: string[]): number {
@@ -225,7 +230,9 @@ export function build(ctx: Context, target: string | undefined, args: string[]):
   const unreadable: string[] = [];
   const faces = target === 'all' ? allFaces(units, unreadable) : [findFace(units, target)];
   const builds = new Map<string, UnitBuild | null>();
+  const apps = new Map<string, string[]>();
   const rest = scriptArgs(args);
+  const skipApps = target === 'all' && rest.includes('--dev');
   let failed = unreadable.length;
 
   for (const line of unreadable) {
@@ -235,14 +242,23 @@ export function build(ctx: Context, target: string | undefined, args: string[]):
   for (const located of faces) {
     const { unit } = located;
 
+    // the apps are read once per unit and handed to the ready step, so the pin check reads none again
     if (!builds.has(unit.dir)) {
-      builds.set(unit.dir, unitBuildOf(ctx, unit));
+      const held = pluginApps(unit.dir);
+
+      apps.set(unit.dir, held);
+      builds.set(unit.dir, unitBuildOf(ctx, unit, held));
     }
 
     const unitBuild = builds.get(unit.dir);
 
     if (!unitBuild) {
       failed++;
+      continue;
+    }
+
+    if (skipApps && apps.get(unit.dir)?.includes(located.face.name)) {
+      ctx.print(`${located.face.name} is a plugin app, which has no watch code for dev mode to change, so the dev build skips it`);
       continue;
     }
 

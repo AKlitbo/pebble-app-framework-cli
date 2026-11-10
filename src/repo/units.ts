@@ -11,7 +11,8 @@
  * root. A unit that is a family has a core/ and one folder per face beside it.
  *
  * A plugin app is a Pebble app plugin with no watch code. paf finds it the way it finds any face, by its
- * appinfo, and only tells it apart to say so in status and to keep it off a framework too old to build it.
+ * appinfo, and only tells it apart to say so in status, to pass over it in a dev build of every face,
+ * and to keep it off a framework too old to build it.
  */
 import fs from 'node:fs';
 import path from 'node:path';

@@ -205,6 +205,58 @@ describe('build', () => {
     expect(calls.filter((call) => call.command === process.execPath).map((call) => call.args[SCRIPT_FLAGS.length + 1])).toEqual(['gridlock']);
   });
 
+  /** The framework stops on a plugin app built with --dev, so build all --dev failed in any repo holding one beside its faces. */
+  test('passes over a plugin app in build all --dev with a line', () => {
+    const root = makeTree({
+      // a unit holding a plugin app has to be on framework 6 or later
+      ...currentUnit('mosaic', 'v6.0.0'),
+      'watchfaces/mosaic/core/.gitkeep': '',
+      'watchfaces/mosaic/gridlock/pebble.appinfo.json': '{ "name": "gridlock" }',
+      'watchfaces/mosaic/calendar-ical/pebble.appinfo.json': '{ "name": "calendar-ical", "projectType": "plugin" }',
+    });
+    const { run, calls } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
+    const { ctx, printed } = makeContext(root, run);
+
+    const result = build(ctx, 'all', ['--dev']);
+
+    expect(result).toBe(0);
+    expect(calls.filter((call) => call.command === process.execPath).map((call) => call.args[SCRIPT_FLAGS.length + 1])).toEqual(['gridlock']);
+    expect(printed).toContain('calendar-ical is a plugin app, which has no watch code for dev mode to change, so the dev build skips it');
+  });
+
+  /** build all --dev passed over a unit of only plugin apps before readying it, so its framework 5 pin went unrefused and the run passed. */
+  test('refuses a plugin app on a pin before framework 6 in build all --dev', () => {
+    const root = makeTree({
+      ...currentUnit('calendar-ical', 'v5.0.0'),
+      'watchfaces/calendar-ical/pebble.appinfo.json': '{ "name": "calendar-ical", "projectType": "plugin" }',
+    });
+    const { run, calls } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
+    const { ctx, printed } = makeContext(root, run);
+
+    const result = build(ctx, 'all', ['--dev']);
+
+    expect(result).toBe(1);
+    expect(printed).toContainEqual(expect.stringMatching(/^watchfaces\/calendar-ical: calendar-ical\/paf\.config\.json pins v5\.0\.0, but calendar-ical is a plugin app/));
+    expect(calls.filter((call) => call.command === process.execPath)).toEqual([]);
+  });
+
+  /** Without --dev a plugin app builds like any face, so build all has to leave it in. */
+  test('builds a plugin app in build all without --dev', () => {
+    const root = makeTree({
+      // a unit holding a plugin app has to be on framework 6 or later
+      ...currentUnit('mosaic', 'v6.0.0'),
+      'watchfaces/mosaic/core/.gitkeep': '',
+      'watchfaces/mosaic/gridlock/pebble.appinfo.json': '{ "name": "gridlock" }',
+      'watchfaces/mosaic/calendar-ical/pebble.appinfo.json': '{ "name": "calendar-ical", "projectType": "plugin" }',
+    });
+    const { run, calls } = fakeRunner((command, args) => (args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined));
+    const { ctx } = makeContext(root, run);
+
+    build(ctx, 'all', []);
+
+    expect(calls.filter((call) => call.command === process.execPath).map((call) => call.args[SCRIPT_FLAGS.length + 1])).toEqual(['calendar-ical', 'gridlock']);
+  });
+
   /** The build script refuses anything but a face first, so a --clean put ahead of it failed every build that had to start clean. */
   test('runs the core build script with the face first and --clean after it', () => {
     const root = makeTree({
