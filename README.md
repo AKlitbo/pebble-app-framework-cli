@@ -70,7 +70,7 @@ Wherever a command takes `[unit]`, a face name works too and picks the unit that
 | `paf status` | Shows each unit's faces, its tag, the newest framework tag, and whether it is ready. |
 | `paf pin <unit> <tag\|latest>` | Moves a unit to another tag and fills its `paf/`. It prints the breaking entries in the framework changelog between the two tags, and counts the rest. |
 | `paf use <unit> local [path]`, `paf use <unit> pinned` | Fills a unit's `paf/` from a local framework clone, uncommitted edits included. `pinned` puts it back on its tag. |
-| `paf build <face\|all> [--clean]` | Builds a face, or every face, through the framework's `tools/build.ts`. It builds clean when the face's keys, dependencies, or framework changed. It runs on Linux, WSL, or macOS, not on Windows itself. |
+| `paf build <face\|all> [--clean] [--dev]` | Builds a face, or every face, through the framework's `tools/build.ts`. It builds clean when the face's keys, dependencies, or framework changed. `--dev` builds in the dev plugin's dev mode, on framework 6.0.0 or later. It runs on Linux, WSL, or macOS, not on Windows itself. |
 | `paf gen <face> <kind\|all> [args]` | Runs one generator for a face and passes it any arguments. `all` runs every generator the face has inputs for, in order, and takes no arguments. |
 | `paf check [unit]` | Runs every check the framework and the unit's listed plugins ship. |
 | `paf tool <face> <name> [args]` | Runs a tool a listed plugin offers, such as `clay-preview` or `tap-walk`. Every argument after the name reaches the tool as typed. |

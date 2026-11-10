@@ -6,6 +6,7 @@ All notable changes to paf are recorded here, following [Keep a Changelog](https
 
 ### Added
 
+- Added `--dev` to the usage and help of `paf build`. Framework 6.0.0 and later build the face in the dev plugin's dev mode with it, and an older framework hands it on to `pebble build`, which refuses it.
 - Added units under `plugins/`, beside `watchfaces/` and `watchapps/`, for a repo of plugin apps. A plugin app is a face whose `pebble.appinfo.json` sets `"projectType": "plugin"`. paf syncs and builds it like any face, and `paf status` marks it `(plugin app)`.
 
 ### Changed

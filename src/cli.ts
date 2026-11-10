@@ -26,7 +26,9 @@ usage: paf <command> [args]
                                move a unit to another tag and fill its paf/, printing the breaking entries between them first
   use <unit> local [path]      point a unit's paf/ at a local framework clone, builds included
   use <unit> pinned            put it back on its tag
-  build <face|all> [--clean]   build a face in its unit (not on Windows itself), clean when message keys, dependencies, or the framework changed
+  build <face|all> [--clean] [--dev]
+                               build a face in its unit (not on Windows itself), clean when message keys, dependencies, or the framework changed,
+                               and in dev mode with --dev
   gen <face> <kind|all> [args]
                                run one generator the framework, a listed plugin, or the unit offers for a face,
                                or all it has inputs for

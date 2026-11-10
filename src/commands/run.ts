@@ -203,17 +203,18 @@ function runIn(ctx: Context, unit: Unit, command: string, args: string[]): boole
 }
 
 /**
- * paf build <face|all> [--clean]
+ * paf build <face|all> [--clean] [--dev]
  *
  * @param ctx The command context.
  * @param target A face, or all.
- * @param args Arguments for the framework's build script, which passes all but --clean on to pebble
- * build. --clean forces a clean build.
+ * @param args Arguments for the framework's build script, which passes all but --clean and --dev on to
+ * pebble build. --clean forces a clean build, and --dev builds in dev mode on framework 6 or later.
+ * paf hands --dev on as it is, so an older framework passes it to pebble build, which refuses it.
  * @return The exit code.
  */
 export function build(ctx: Context, target: string | undefined, args: string[]): number {
   if (!target) {
-    throw new Error('usage: paf build <face|all> [--clean]');
+    throw new Error('usage: paf build <face|all> [--clean] [--dev]');
   }
 
   if (ctx.platform === 'win32') {
