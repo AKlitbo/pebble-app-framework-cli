@@ -2,18 +2,23 @@
  * Finding the units in a face repo, and the faces in each.
  *
  * A unit is a folder with a paf.config.json: the repo root, for a repo that is one face or one family,
- * or a folder straight under watchfaces/ or watchapps/, for a family or a face of its own. The two
- * folders only sort faces from apps, and a unit in either is laid out the same. Each one keeps its own
- * copy of the framework, its own package.json, and its own node_modules, so it works like a small repo.
+ * or a folder straight under watchfaces/, watchapps/, or plugins/, for a family or a face of its own.
+ * The three folders only sort faces from apps and plugin apps, and a unit in any of them is laid out the
+ * same. Each one keeps its own copy of the framework, its own package.json, and its own node_modules, so
+ * it works like a small repo.
  *
  * Inside a unit a face sits in one of two places. A unit that is a face has its appinfo at its own
  * root. A unit that is a family has a core/ and one folder per face beside it.
+ *
+ * A plugin app is a Pebble app plugin with no watch code. paf finds it the way it finds any face, by its
+ * appinfo, and only tells it apart to say so in status and to keep it off a framework too old to build it.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { messageOf } from '../shared/errors.ts';
+import { isObject } from '../shared/json.ts';
 import { inSentence } from '../shared/words.ts';
-import { CONFIG_FILE } from '../unit/config.ts';
+import { CONFIG_FILE, PLUGIN_APP_MIN_MAJOR } from '../unit/config.ts';
 
 /** The unit file paf 1.0.0 reads, which a unit moving to this paf renames by hand. */
 const OLD_CONFIG_FILE = 'paf.json';
@@ -23,6 +28,12 @@ export const APPINFO_REL = 'pebble.appinfo.json';
 
 /** Where framework 3 keeps a face's appinfo, which a unit moving to framework 4 moves up a folder. */
 const OLD_APPINFO_REL = 'config/pebble.appinfo.json';
+
+/** The folders under a repo root that hold units, in the order they are walked. */
+const UNIT_FOLDERS = ['watchfaces', 'watchapps', 'plugins'];
+
+/** The appinfo `projectType` that makes a face a plugin app, spelled as the Pebble SDK spells it. */
+const PLUGIN_PROJECT_TYPE = 'plugin';
 
 /**
  * One unit: its folder, that folder relative to the repo root, the name commands call it by, and how
@@ -42,7 +53,8 @@ export type Face = {
 };
 
 /**
- * Every unit in a repo, the root first and then the folders under watchfaces/ and watchapps/ by name.
+ * Every unit in a repo, the root first and then the folders under watchfaces/, watchapps/, and plugins/,
+ * each by name.
  *
  * Commands take a unit by its folder's name, so two units with one name, one in each folder, are
  * refused rather than leaving a pin or a sync to pick one of them. A paf.json anywhere a unit can sit
@@ -66,7 +78,7 @@ export function findUnits(root: string): Unit[] {
     units.push({ dir: root, rel: '.', name: rootName, where: rootName });
   }
 
-  for (const folder of ['watchfaces', 'watchapps']) {
+  for (const folder of UNIT_FOLDERS) {
     const dir = path.join(root, folder);
     const entries = fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }) : [];
 
@@ -138,6 +150,18 @@ export function oldAppinfoProblem(dir: string, from = '', folders: string[] = fa
 }
 
 /**
+ * The name a unit that is a face takes from its appinfo. A face in a family is named by its folder.
+ * unitFaces and pluginApps both name such a unit through this, so a plugin app is always found among the
+ * faces under the same name.
+ *
+ * @param appinfo The unit's appinfo, or null when it could not be read.
+ * @return The name, or null when the appinfo gives none as a string.
+ */
+function ownName(appinfo: Record<string, unknown> | null): string | null {
+  return typeof appinfo?.name === 'string' && appinfo.name ? appinfo.name : null;
+}
+
+/**
  * The faces in a unit, by name.
  *
  * @param dir The unit's folder.
@@ -152,19 +176,93 @@ export function unitFaces(dir: string): Face[] {
   }
 
   if (fs.existsSync(path.join(dir, APPINFO_REL))) {
-    const appinfo = JSON.parse(fs.readFileSync(path.join(dir, APPINFO_REL), 'utf8'));
+    const appinfo: unknown = JSON.parse(fs.readFileSync(path.join(dir, APPINFO_REL), 'utf8'));
+    const name = ownName(isObject(appinfo) ? appinfo : null);
 
-    if (!appinfo.name) {
+    if (!name) {
       throw new Error(`the face at ${dir} needs a name in its ${APPINFO_REL}`);
     }
 
-    return [{ name: appinfo.name, rel: '.' }];
+    return [{ name, rel: '.' }];
   }
 
   return folders
     .filter((name) => fs.existsSync(path.join(dir, name, APPINFO_REL)))
     .map((name) => ({ name, rel: name }))
     .sort((first, second) => first.name.localeCompare(second.name));
+}
+
+// a half-edited appinfo that still sets the plugin projectType, matched in its text since it cannot be parsed
+const PLUGIN_PROJECT_TYPE_TEXT = /"projectType"\s*:\s*"plugin"/;
+
+/**
+ * Reads one face's appinfo for the plugin check. An appinfo that is not JSON counts as a plugin app when
+ * its text still sets the plugin projectType, and as not one otherwise.
+ */
+function readForPluginCheck(file: string): { app: boolean; appinfo: Record<string, unknown> | null } {
+  let text: string;
+
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    return { app: false, appinfo: null };
+  }
+
+  try {
+    const appinfo: unknown = JSON.parse(text);
+
+    return isObject(appinfo) ? { app: appinfo.projectType === PLUGIN_PROJECT_TYPE, appinfo } : { app: false, appinfo: null };
+  } catch {
+    return { app: PLUGIN_PROJECT_TYPE_TEXT.test(text), appinfo: null };
+  }
+}
+
+/**
+ * The faces in a unit that are plugin apps, known by `"projectType": "plugin"` in their appinfo, and
+ * named as unitFaces names them. It reads the appinfos itself rather than through unitFaces, so a face
+ * with no name yet still counts, named by its unit's folder, and finding a face by name stays a check
+ * that its appinfo is there.
+ *
+ * An appinfo that is not JSON counts as a plugin app when its text still sets `"projectType": "plugin"`,
+ * so a half-edited plugin app on a pin before framework 6 is still refused. Any other broken appinfo
+ * counts as not one, so a half-edited watchface never has its unit refused as a plugin app. paf build
+ * reads each face's appinfo as it reaches that face, so a broken one fails that face's build and the
+ * others go on.
+ *
+ * @param dir The unit's folder.
+ * @return The plugin apps' names, ordered by name.
+ */
+export function pluginApps(dir: string): string[] {
+  if (fs.existsSync(path.join(dir, APPINFO_REL))) {
+    const own = readForPluginCheck(path.join(dir, APPINFO_REL));
+
+    return own.app ? [ownName(own.appinfo) ?? path.basename(path.resolve(dir))] : [];
+  }
+
+  // a folder that cannot be listed holds none as far as this goes, so status and doctor carry on past it
+  // and the command that reads its faces names it
+  let folders: string[];
+
+  try {
+    folders = familyFolders(dir);
+  } catch {
+    return [];
+  }
+
+  return folders
+    .filter((name) => readForPluginCheck(path.join(dir, name, APPINFO_REL)).app)
+    .sort((first, second) => first.localeCompare(second));
+}
+
+/**
+ * Says why a unit's plugin apps cannot take a framework before 6, for a message that has already named
+ * the tag.
+ *
+ * @param apps The unit's plugin apps.
+ * @return Such as "calendar-ical is a plugin app, and plugin apps need framework 6 or later".
+ */
+export function pluginAppsNeed(apps: string[]): string {
+  return `${inSentence(apps)} ${apps.length === 1 ? 'is a plugin app' : 'are plugin apps'}, and plugin apps need framework ${PLUGIN_APP_MIN_MAJOR} or later`;
 }
 
 /** A face and the unit holding it. */

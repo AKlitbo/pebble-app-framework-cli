@@ -24,6 +24,16 @@ export function isVersionTag(tag: string): boolean {
 }
 
 /**
+ * Whether a tag is a pre-release, such as a release candidate.
+ *
+ * @param tag The tag.
+ * @return True for vX.Y.Z-label, false for a release or a tag that is not a version.
+ */
+export function isPrerelease(tag: string): boolean {
+  return Boolean(parse(tag)?.pre);
+}
+
+/**
  * The major version a tag names, the first of its three numbers.
  *
  * @param tag The tag, such as v4.0.0 or v4.0.0-rc.1.
@@ -117,7 +127,7 @@ export function compareTags(first: string, second: string): number {
  */
 export function newestTag(tags: string[]): string | null {
   const versions = tags.filter(isVersionTag);
-  const releases = versions.filter((tag) => !tag.includes('-'));
+  const releases = versions.filter((tag) => !isPrerelease(tag));
   const pool = releases.length ? releases : versions;
 
   return pool.sort(compareTags).at(-1) ?? null;

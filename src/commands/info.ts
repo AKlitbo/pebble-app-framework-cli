@@ -4,11 +4,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { listTags, mirrorOf } from '../framework/mirror.ts';
-import { compareTags } from '../framework/tags.ts';
+import { compareTags, isPrerelease } from '../framework/tags.ts';
 import { frameworkEngines, wrongNode } from '../framework/engines.ts';
 import { compareVersions, parsePebbleVersion, parseToolchain, type Toolchain } from '../framework/toolchain.ts';
-import { fillableTags, latestTag, pinnedTag, readListed } from '../unit/config.ts';
-import { oldAppinfoProblem, unitFaces, type Unit } from '../repo/units.ts';
+import { fillableTags, floorFor, latestTag, pinnedTag, readListed } from '../unit/config.ts';
+import { oldAppinfoProblem, pluginApps, unitFaces, type Unit } from '../repo/units.ts';
 import type { Context } from '../shared/context.ts';
 import { installState, lockHash, readInstallStamp } from '../unit/install.ts';
 import { messageOf } from '../shared/errors.ts';
@@ -48,10 +48,10 @@ function toolchainsByFramework(units: Unit[], toolchains: Map<Unit, Toolchain | 
   return found;
 }
 
-/** A unit's face names, or ? when an appinfo cannot be read. */
-function facesOf(unit: Unit): string {
+/** A unit's face names, each plugin app marked as one, or ? when an appinfo cannot be read. */
+function facesOf(unit: Unit, apps: string[]): string {
   try {
-    return unitFaces(unit.dir).map((face) => face.name).join(', ');
+    return unitFaces(unit.dir).map((face) => (apps.includes(face.name) ? `${face.name} (plugin app)` : face.name)).join(', ');
   } catch {
     return '?';
   }
@@ -63,20 +63,21 @@ function facesOf(unit: Unit): string {
  *
  * @param ctx The command context.
  * @param unit The unit.
+ * @param apps The unit's plugin apps, when the caller has read them already.
  * @return A short state for the status table.
  */
-export function unitState(ctx: Context, unit: Unit): string {
+export function unitState(ctx: Context, unit: Unit, apps?: string[]): string {
   try {
-    return stateOf(ctx, unit);
+    return stateOf(ctx, unit, apps);
   } catch (error) {
     return `problem: ${messageOf(error)}`;
   }
 }
 
-function stateOf(ctx: Context, unit: Unit): string {
+function stateOf(ctx: Context, unit: Unit, apps?: string[]): string {
   // a unit on a local framework builds from its clone whatever it pins, the way sync and build treat it.
   // its file is still read, so a broken one shows here rather than at the next paf pin
-  const read = unitFramework(unit.dir);
+  const read = unitFramework(unit.dir, false, apps);
 
   if (read.local) {
     return `local, ${read.stamp.local}`;
@@ -178,12 +179,17 @@ export function sdkVerdict(active: string, built: string): { word: string; probl
 export function status(ctx: Context): number {
   const units = unitsOf(ctx);
   const known = fs.existsSync(path.join(mirrorOf(ctx), 'HEAD')) ? listTags(ctx.run, mirrorOf(ctx)) : [];
-  // the same tag paf pin <unit> latest takes, never a framework 3 release it would refuse
-  const latest = latestTag(known) ?? '?';
   const rows = [['UNIT', 'FACES', 'TAG', 'LATEST', 'STATE']];
 
+  let appOnCandidate = false;
+
   for (const unit of units) {
-    rows.push([unit.where, facesOf(unit), tagOf(unit), latest, unitState(ctx, unit)]);
+    const apps = pluginApps(unit.dir);
+    // the same tag paf pin <unit> latest takes, never a release it would refuse for this unit
+    const latest = latestTag(known, floorFor(apps));
+
+    appOnCandidate ||= apps.length > 0 && latest !== null && isPrerelease(latest);
+    rows.push([unit.where, facesOf(unit, apps), tagOf(unit), latest ?? '?', unitState(ctx, unit, apps)]);
   }
 
   for (const line of table(rows)) {
@@ -191,6 +197,10 @@ export function status(ctx: Context): number {
   }
 
   ctx.print('LATEST is the newest framework tag paf fills as of the last fetch, a release when there is one, and paf sync fetches again.');
+
+  if (appOnCandidate) {
+    ctx.print('A unit holding a plugin app only takes framework 6 or later, so its LATEST is a candidate while framework 6 has no release.');
+  }
 
   const pebble = activePebble(ctx);
   const built = [...toolchainsByFramework(units, new Map(units.map((unit) => [unit, toolchainOf(unit)]))).entries()].map(([framework, { toolchain }]) => `${framework} was built with ${toolchain.sdk}`);
@@ -346,7 +356,9 @@ export function doctor(ctx: Context): number {
   }
 
   const workflows = path.join(ctx.root, '.github', 'workflows');
-  // only a tag this paf fills sets which action tag the workflows want, never a leftover framework 3 pin
+  // only a tag this paf fills sets which action tag the workflows want, never a leftover framework 3 pin.
+  // plugin apps keep a repo of their own, so a repo mixing them with faces is held to its newest pin of
+  // all, the same as faces on two framework lines
   const newest = fillableTags(units.map(tagOf)).sort(compareTags).at(-1);
 
   if (newest && fs.existsSync(workflows)) {

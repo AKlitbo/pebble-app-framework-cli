@@ -20,6 +20,23 @@ export const CONFIG_FILE = 'paf.config.json';
 export const FRAMEWORK_MIN_MAJOR = 4;
 
 /**
+ * The oldest framework major that builds a plugin app, a Pebble app plugin with no watch code. An older
+ * framework builds one as a watchface, which stops partway since it has no watch code.
+ */
+export const PLUGIN_APP_MIN_MAJOR = 6;
+
+/**
+ * The oldest framework major a unit can take: framework 6 for a unit holding a plugin app, and the
+ * oldest this paf fills for any other.
+ *
+ * @param pluginApps The unit's plugin apps.
+ * @return The major.
+ */
+export function floorFor(pluginApps: string[]): number {
+  return pluginApps.length ? PLUGIN_APP_MIN_MAJOR : FRAMEWORK_MIN_MAJOR;
+}
+
+/**
  * Why this paf cannot fill a framework tag, or null when it can. A tag has to be a version tag of
  * framework 4 or later.
  *
@@ -45,24 +62,31 @@ export function unfillable(tag: string): string | null {
 }
 
 /**
- * The tags this paf can fill, out of every tag the framework has.
+ * The tags this paf can fill, out of every tag the framework has, from a unit's floor on.
  *
  * @param tags Every tag.
- * @return The version tags of framework 4 and later.
+ * @param floor The oldest major the unit takes, from floorFor.
+ * @return The version tags of framework 4 and later, or of the floor and later when that is higher.
  */
-export function fillableTags(tags: string[]): string[] {
-  return tags.filter((tag) => unfillable(tag) === null);
+export function fillableTags(tags: string[], floor = FRAMEWORK_MIN_MAJOR): string[] {
+  return tags.filter((tag) => {
+    const major = majorOf(tag);
+
+    return major !== null && major >= floor && unfillable(tag) === null;
+  });
 }
 
 /**
  * The tag latest means: the newest release paf fills, or while there are only candidates, the newest
- * of those rather than a framework 3 release this paf would refuse.
+ * of those rather than a framework 3 release this paf would refuse. From a unit's floor on, so a plugin
+ * app takes a framework 6 candidate rather than a framework 5 release it cannot build on.
  *
  * @param tags Every tag.
- * @return The tag, or null when there is no tag of framework 4 or later.
+ * @param floor The oldest major the unit takes, from floorFor.
+ * @return The tag, or null when there is no tag from the floor on.
  */
-export function latestTag(tags: string[]): string | null {
-  return newestTag(fillableTags(tags));
+export function latestTag(tags: string[], floor = FRAMEWORK_MIN_MAJOR): string | null {
+  return newestTag(fillableTags(tags, floor));
 }
 
 /**

@@ -217,6 +217,92 @@ describe('pin', () => {
     expect(printed.find((line) => line.includes('changelog entries'))).toMatch(/being left behind\. The full list is in paf\/CHANGELOG\.md until the pin moves/);
   });
 
+  /** A plugin app pinned to framework 5 builds as a watchface and stops partway, so the pin is where to catch it. */
+  test('refuses a framework 5 tag for a plugin app before printing or writing anything', () => {
+    const root = makeTree({
+      'plugins/calendar-ical/paf.config.json': PIN,
+      'plugins/calendar-ical/package.json': '{ "workspaces": ["paf", "paf/plugins/*"] }',
+      'plugins/calendar-ical/pebble.appinfo.json': '{ "name": "calendar-ical", "projectType": "plugin" }',
+    });
+    const { run } = fakeRunner((command, args) => {
+      if (args.includes('tag')) {
+        return { stdout: 'v5.0.0\nv6.0.0-rc.1\n' };
+      }
+
+      return args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined;
+    });
+    const { ctx, printed } = makeContext(root, run);
+
+    const result = () => pin(ctx, 'calendar-ical', 'v5.0.0');
+
+    expect(result).toThrow(/^cannot pin v5\.0\.0, since calendar-ical is a plugin app, and plugin apps need framework 6 or later\. Recent ones: v6\.0\.0-rc\.1$/);
+    expect(printed).toEqual([]);
+    expect(fs.readFileSync(path.join(root, 'plugins', 'calendar-ical', 'paf.config.json'), 'utf8')).toBe(PIN);
+  });
+
+  /** A plugin app told a framework 3 tag needs paf 1.0.0 went looking for an old paf that cannot build it either. */
+  test('tells a plugin app a framework 3 tag is too old for it, not for this paf', () => {
+    const root = makeTree({
+      'plugins/calendar-ical/paf.config.json': PIN,
+      'plugins/calendar-ical/package.json': '{ "workspaces": ["paf", "paf/plugins/*"] }',
+      'plugins/calendar-ical/pebble.appinfo.json': '{ "name": "calendar-ical", "projectType": "plugin" }',
+    });
+    const { ctx } = makeContext(root, tagged.run);
+
+    const result = () => pin(ctx, 'calendar-ical', 'v3.0.0');
+
+    expect(result).toThrow(/^cannot pin v3\.0\.0, since calendar-ical is a plugin app, and plugin apps need framework 6 or later/);
+  });
+
+  /**
+   * Framework 6 is tried on candidates before it has a release, and latest read the framework 5 release,
+   * so a plugin app was refused its own latest and had to name the candidate by hand.
+   */
+  test('takes the newest framework 6 candidate as latest for a plugin app', () => {
+    const root = makeTree({
+      'plugins/calendar-ical/paf.config.json': JSON.stringify({ framework: 'v6.0.0-rc.1', commit: COMMIT }),
+      'plugins/calendar-ical/package.json': '{ "workspaces": ["paf", "paf/plugins/*"] }',
+      'plugins/calendar-ical/pebble.appinfo.json': '{ "name": "calendar-ical", "projectType": "plugin" }',
+    });
+    const { run } = fakeRunner((command, args) => {
+      if (command === 'npm') {
+        fs.mkdirSync(path.join(root, 'plugins', 'calendar-ical', 'node_modules'), { recursive: true });
+      }
+
+      if (args.includes('tag')) {
+        return { stdout: 'v5.0.0\nv6.0.0-rc.1\nv6.0.0-rc.2\n' };
+      }
+
+      return args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined;
+    });
+    const { ctx } = makeContext(root, run);
+
+    pin(ctx, 'calendar-ical', 'latest');
+
+    expect(JSON.parse(fs.readFileSync(path.join(root, 'plugins', 'calendar-ical', 'paf.config.json'), 'utf8')).framework).toBe('v6.0.0-rc.2');
+  });
+
+  /** A plugin app has no generators, so a hint to run them sends its developer looking for something that is not there. */
+  test('leaves out the generator hint for a unit of plugin apps', () => {
+    const root = makeTree({
+      'plugins/calendar-ical/paf.config.json': JSON.stringify({ framework: 'v6.0.0-rc.1', commit: COMMIT }),
+      'plugins/calendar-ical/package.json': '{ "workspaces": ["paf", "paf/plugins/*"] }',
+      'plugins/calendar-ical/pebble.appinfo.json': '{ "name": "calendar-ical", "projectType": "plugin" }',
+    });
+    const { run } = fakeRunner((command, args) => {
+      if (command === 'npm') {
+        fs.mkdirSync(path.join(root, 'plugins', 'calendar-ical', 'node_modules'), { recursive: true });
+      }
+
+      return args.includes('rev-parse') ? { stdout: `${COMMIT}\n` } : undefined;
+    });
+    const { ctx, printed } = makeContext(root, run);
+
+    pin(ctx, 'calendar-ical', 'v6.0.0-rc.2');
+
+    expect(printed.filter((line) => line.includes('paf gen'))).toEqual([]);
+  });
+
   /**
    * A pin written before the refusal would name a framework whose layout this paf cannot copy into the
    * unit, and a changelog printed first would read as though the move had gone ahead.

@@ -1,12 +1,14 @@
 /**
- * Specs for reading a unit's paf.config.json.
+ * Specs for reading a unit's paf.config.json, and for the framework tags a unit can take.
  *
  * The file carries the unit's plugins and its own generators as well as its pin, and a shape paf cannot
- * use has to stop with the file named, rather than fail later inside a command that reads it.
+ * use has to stop with the file named, rather than fail later inside a command that reads it. A unit
+ * holding a plugin app only takes framework 6 or later, so latest has to keep to the tags above that
+ * floor, candidates included while framework 6 has no release.
  */
 import { describe, expect, test } from 'vitest';
 import { makeTree } from '../testing/tree.ts';
-import { readConfig, readConfigIfSet } from './config.ts';
+import { floorFor, latestTag, readConfig, readConfigIfSet } from './config.ts';
 
 describe('readConfig', () => {
   /** A generator with nothing to run would only fail inside paf gen <face> all, as a run of node with no file. */
@@ -90,5 +92,24 @@ describe('readConfigIfSet', () => {
     const result = readConfigIfSet(root)?.framework;
 
     expect(result).toBe('v3.0.0');
+  });
+});
+
+describe('latestTag', () => {
+  /**
+   * Framework 6 is tried on candidates before it has a release, and latest read the framework 5 release,
+   * so a plugin app was refused its own latest and status pointed it at a tag it cannot take.
+   */
+  test('takes the newest framework 6 candidate from a plugin app floor', () => {
+    const result = latestTag(['v5.0.0', 'v6.0.0-rc.1', 'v6.0.0-rc.2'], floorFor(['calendar-ical']));
+
+    expect(result).toBe('v6.0.0-rc.2');
+  });
+
+  /** A watchface moved onto a framework 6 candidate by latest would leave a release for a build nobody has tried. */
+  test('takes the newest release for a unit with no plugin app', () => {
+    const result = latestTag(['v5.0.0', 'v6.0.0-rc.1'], floorFor([]));
+
+    expect(result).toBe('v5.0.0');
   });
 });

@@ -30,7 +30,7 @@ export function unitsOf(ctx: Context): Unit[] {
   const units = findUnits(ctx.root);
 
   if (units.length === 0) {
-    throw new Error('no units here. A unit is a folder with a paf.config.json holding { "framework": "<tag>" }, at the repo root or under watchfaces/ or watchapps/');
+    throw new Error('no units here. A unit is a folder with a paf.config.json holding { "framework": "<tag>" }, at the repo root or under watchfaces/, watchapps/, or plugins/');
   }
 
   return units;

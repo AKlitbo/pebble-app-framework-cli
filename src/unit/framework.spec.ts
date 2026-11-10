@@ -67,6 +67,43 @@ describe('unitFramework', () => {
     expect(result.gen).toEqual({ vibrant: { script: 'core/tools/vibrant.ts', after: 'clay', when: undefined } });
     expect(result.plugins).toEqual(['icons']);
   });
+
+  /** A plugin app pinned to framework 5 builds as a watchface and stops partway, far from the pin that caused it. */
+  test('refuses a plugin app pinned before framework 6', () => {
+    const root = makeTree({
+      'paf.config.json': JSON.stringify({ framework: 'v5.0.0', commit: 'a'.repeat(40) }),
+      'pebble.appinfo.json': '{ "name": "calendar-ical", "projectType": "plugin" }',
+    });
+
+    const result = () => unitFramework(root);
+
+    expect(result).toThrow(/paf\.config\.json pins v5\.0\.0, but calendar-ical is a plugin app, and plugin apps need framework 6 or later\. Move the unit with paf pin /);
+  });
+
+  /** A plugin app on framework 3 was told to move to framework 4 or 5, which paf pin then refused for it. */
+  test('tells a plugin app pinned to framework 3 that it needs framework 6', () => {
+    const root = makeTree({
+      'paf.config.json': JSON.stringify({ framework: 'v3.0.0', commit: 'a'.repeat(40) }),
+      'pebble.appinfo.json': '{ "name": "calendar-ical", "projectType": "plugin" }',
+    });
+
+    const result = () => unitFramework(root);
+
+    expect(result).toThrow(/pins v3[.]0[.]0, but calendar-ical is a plugin app, and plugin apps need framework 6 or later/);
+  });
+
+  /** A plugin app is worked on against a local framework clone, whatever it pins, so the clone is never refused. */
+  test('leaves a local plugin app on an older pin alone', () => {
+    const root = makeTree({
+      'paf.config.json': JSON.stringify({ framework: 'v5.0.0', commit: 'a'.repeat(40) }),
+      'pebble.appinfo.json': '{ "name": "calendar-ical", "projectType": "plugin" }',
+      'paf/.paf.json': JSON.stringify({ commit: 'a'.repeat(40), local: '/work/pebble-app-framework' }),
+    });
+
+    const result = unitFramework(root);
+
+    expect(result.local).toBe(true);
+  });
 });
 
 describe('fillFromTag', () => {

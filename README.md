@@ -22,11 +22,13 @@ npm i -g https://github.com/AKlitbo/pebble-app-framework-cli/releases/download/v
 
 A unit is a folder with a `paf.config.json`:
 
-* a family under `watchfaces/` or `watchapps/`, with its `core/` and one folder per face
-* a face of its own under `watchfaces/` or `watchapps/`
+* a family under `watchfaces/`, `watchapps/`, or `plugins/`, with its `core/` and one folder per face
+* a face of its own under `watchfaces/`, `watchapps/`, or `plugins/`
 * the repo root, for a repo that is one face or one family
 
 Each unit works like a small repo of its own. A face is any folder holding a `pebble.appinfo.json`. In a face of its own that is the unit's folder. In a family it is each folder beside `core/`.
+
+A plugin app is a Pebble app plugin with no watch code, which serves data to watchfaces through the Pebble app. It is a face whose appinfo sets `"projectType": "plugin"`, and a repo of them keeps each under `plugins/`. paf finds, syncs, and builds it like any face, and `paf status` marks it `(plugin app)`. Plugin apps need framework 6 or later, so `paf pin` refuses an older tag for a unit holding one, and `paf pin <unit> latest` takes the newest tag of framework 6 or later, a candidate while framework 6 has no release. A unit already pinned to an older tag stops every command that reads its pin, other than one building from a local clone through `paf use <unit> local`, and shows as a problem in `paf status`.
 
 ```
 watchfaces/mosaic/

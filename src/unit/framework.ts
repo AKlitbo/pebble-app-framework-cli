@@ -16,7 +16,9 @@ import { BASE_PATHSPECS, PLUGINS_DIR, SHIP_ROOT, shipPathspecs } from '../framew
 import { messageOf } from '../shared/errors.ts';
 import { sha256 } from '../shared/hash.ts';
 import { must, type Runner } from '../shared/runner.ts';
-import { readConfig, readConfigIfSet, readListed, type UnitConfig } from './config.ts';
+import { majorOf } from '../framework/tags.ts';
+import { pluginApps, pluginAppsNeed } from '../repo/units.ts';
+import { PLUGIN_APP_MIN_MAJOR, configName, pinnedTag, readConfig, readConfigIfSet, readListed, type UnitConfig } from './config.ts';
 import { markInstallStale } from './install.ts';
 
 /** The folder in a unit that holds its framework. */
@@ -217,9 +219,10 @@ export type UnitFramework =
  *
  * @param unitDir The unit's folder.
  * @param repin Whether a local unit is being put back on its tag, which reads its pin strictly too.
+ * @param apps The unit's plugin apps, when the caller has read them already.
  * @return What the unit builds from, read as local only for a local unit that is not being put back.
  */
-export function unitFramework(unitDir: string, repin = false): UnitFramework {
+export function unitFramework(unitDir: string, repin = false, apps?: string[]): UnitFramework {
   const stamp = readStamp(unitDir);
 
   if (stamp?.local && !repin) {
@@ -229,6 +232,23 @@ export function unitFramework(unitDir: string, repin = false): UnitFramework {
     const listed = config ? { plugins: Object.keys(config.plugins), gen: config.gen } : readListed(unitDir);
 
     return { local: true, stamp: { ...stamp, local: stamp.local }, config, ...listed };
+  }
+
+  // a plugin app is told it needs framework 6 before readConfig refuses a framework 3 pin or one that is
+  // not a version, which would send it to framework 4 or 5
+  // on a pin before framework 6, which most watchface units have, this reads each face's appinfo unless
+  // the caller passes the apps it has read already
+  // that is a few small files once per command, which costs less than a plugin app reaching an old
+  // framework's build and stopping partway with nothing naming the pin
+  const pinned = pinnedTag(unitDir);
+  const major = pinned ? majorOf(pinned) : null;
+
+  if (pinned && (major === null || major < PLUGIN_APP_MIN_MAJOR)) {
+    const held = apps ?? pluginApps(unitDir);
+
+    if (held.length) {
+      throw new Error(`${configName(unitDir)} pins ${pinned}, but ${pluginAppsNeed(held)}. Move the unit with paf pin ${path.basename(path.resolve(unitDir))} <tag>`);
+    }
   }
 
   const config = readConfig(unitDir);

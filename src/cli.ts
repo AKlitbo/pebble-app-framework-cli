@@ -39,9 +39,9 @@ usage: paf <command> [args]
   format [unit] [--check]      format a unit's files the same way, or with --check say which would change
   doctor                       check git, node, the pins, the unit layout, the SDK, and the workflows
 
-A unit is a folder with a paf.config.json: a family or a face of its own under watchfaces/ or watchapps/,
-or the repo root for a repo that is one face or one family. PAF_HOME moves the cache. PAF_REPO fetches the framework from
-another URL or path.`;
+A unit is a folder with a paf.config.json: a family or a face of its own under watchfaces/, watchapps/, or
+plugins/, or the repo root for a repo that is one face or one family. PAF_HOME moves the cache. PAF_REPO
+fetches the framework from another URL or path.`;
 
 /** Takes a --flag out of the argument list, and says whether it was there. */
 function takeFlag(args: string[], flag: string): boolean {

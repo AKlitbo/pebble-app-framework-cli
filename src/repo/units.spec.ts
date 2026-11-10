@@ -3,12 +3,13 @@
  *
  * Every command starts here. A unit the lookup misses is never synced or built, and a face given to
  * the wrong unit builds against the wrong framework. The shapes worth pinning are the ones the repos
- * really have: a family, a face of its own, and a repo that is one face at its root.
+ * really have: a family, a face of its own, and a repo that is one face at its root. A plugin app is
+ * pinned too, since a unit holding one that the lookup misses takes a framework too old to build it.
  */
 import path from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { makeTree } from '../testing/tree.ts';
-import { allFaces, findUnit, findUnits, unitFaces } from './units.ts';
+import { allFaces, findUnit, findUnits, pluginApps, unitFaces } from './units.ts';
 
 const PIN = '{ "framework": "v4.1.0" }';
 
@@ -40,6 +41,15 @@ describe('findUnits', () => {
     const result = findUnits(root).map((unit) => unit.rel);
 
     expect(result).toEqual(['watchfaces/mosaic', 'watchapps/toolbox']);
+  });
+
+  /** A repo of plugin apps keeps them under plugins/, and a unit there was never synced, built, or pinned. */
+  test('finds units under plugins/ after the ones under watchapps/', () => {
+    const root = makeTree({ 'watchapps/toolbox/paf.config.json': PIN, 'plugins/calendar-ical/paf.config.json': PIN, 'watchfaces/mosaic/paf.config.json': PIN });
+
+    const result = findUnits(root).map((unit) => unit.rel);
+
+    expect(result).toEqual(['watchfaces/mosaic', 'watchapps/toolbox', 'plugins/calendar-ical']);
   });
 
   /** Commands take a unit by its folder's name, so paf pin toolbox with one in each folder moved whichever came first. */
@@ -128,6 +138,15 @@ describe('unitFaces', () => {
 
     expect(result).toThrow(/^sidereel\/config\/pebble\.appinfo\.json is where framework 3/);
   });
+
+  /** A name that was not a string became the face's name here, while the plugin check named the unit by its folder, so status lost the plugin app mark. */
+  test('refuses a face of its own whose appinfo name is not a string', () => {
+    const root = makeTree({ 'paf.config.json': PIN, 'pebble.appinfo.json': '{ "name": 42 }' });
+
+    const result = () => unitFaces(root);
+
+    expect(result).toThrow(/needs a name in its pebble\.appinfo\.json/);
+  });
 });
 
 describe('findUnit', () => {
@@ -185,5 +204,60 @@ describe('allFaces', () => {
 
     expect(result).toEqual(['gridlock']);
     expect(unreadable).toEqual([expect.stringMatching(/^watchfaces\/sketchbook: /)]);
+  });
+});
+
+/** A plugin app's appinfo, which the Pebble SDK marks with projectType. */
+const PLUGIN_APPINFO = '{ "name": "calendar-ical", "projectType": "plugin" }';
+
+describe('pluginApps', () => {
+  /** A plugin app missed here builds on a framework too old for it, which stops partway with nothing pointing at the pin. */
+  test('names a unit that is a plugin app', () => {
+    const root = makeTree({ 'paf.config.json': PIN, 'pebble.appinfo.json': PLUGIN_APPINFO });
+
+    const result = pluginApps(root);
+
+    expect(result).toEqual(['calendar-ical']);
+  });
+
+  /** A watchface marked as a plugin app would be refused a framework it builds on fine. */
+  test('leaves out faces with no projectType or another one', () => {
+    const root = makeTree({
+      'core/.gitkeep': '',
+      'gridlock/pebble.appinfo.json': '{ "name": "gridlock" }',
+      'sidereel/pebble.appinfo.json': '{ "name": "sidereel", "projectType": "native" }',
+      'agenda/pebble.appinfo.json': '{ "name": "agenda", "projectType": "plugin" }',
+    });
+
+    const result = pluginApps(root);
+
+    expect(result).toEqual(['agenda']);
+  });
+
+  /** A plugin app with no name yet slipped past the framework 6 check, and a pin to framework 5 was written. */
+  test('names a unit that is a plugin app even when its faces cannot be read', () => {
+    const root = makeTree({ 'pebble.appinfo.json': '{ "projectType": "plugin" }' });
+
+    const result = pluginApps(root);
+
+    expect(result).toEqual([path.basename(root)]);
+  });
+
+  /** A half-edited watchface appinfo is named by whatever reads the faces, so its unit must not be refused as a plugin app. */
+  test('counts a face whose appinfo cannot be read as not a plugin app', () => {
+    const root = makeTree({ 'core/.gitkeep': '', 'gridlock/pebble.appinfo.json': '{ "name": ' });
+
+    const result = pluginApps(root);
+
+    expect(result).toEqual([]);
+  });
+
+  /** A plugin app half-edited on a pin before framework 6 slipped past the check and stopped partway in an old framework's build. */
+  test('counts an appinfo that cannot be read but still sets the plugin projectType as a plugin app', () => {
+    const root = makeTree({ 'core/.gitkeep': '', 'calendar-ical/pebble.appinfo.json': '{ "name": "calendar-ical", "projectType": "plugin", ' });
+
+    const result = pluginApps(root);
+
+    expect(result).toEqual(['calendar-ical']);
   });
 });

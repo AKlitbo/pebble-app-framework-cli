@@ -1,12 +1,14 @@
 /**
  * paf pin: moving one unit to another framework tag, with the changelog between the two shown first.
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { breakingEntries, sectionsBetween } from '../framework/changelog.ts';
 import { listFolders, listTags, mirrorOf, resolveRef, showFile, updateMirror } from '../framework/mirror.ts';
 import { PLUGINS_DIR, SHIP_ROOT, shipPathspecs } from '../framework/ship.ts';
-import { compareTags, isVersionTag } from '../framework/tags.ts';
-import { FRAMEWORK_MIN_MAJOR, fillableTags, latestTag, readConfigIfSet, readListed, unfillable, writePin } from '../unit/config.ts';
-import { findUnit, unitFaces } from '../repo/units.ts';
+import { compareTags, isVersionTag, majorOf } from '../framework/tags.ts';
+import { FRAMEWORK_MIN_MAJOR, fillableTags, floorFor, latestTag, readConfigIfSet, readListed, unfillable, writePin } from '../unit/config.ts';
+import { APPINFO_REL, findUnit, pluginApps, pluginAppsNeed, unitFaces } from '../repo/units.ts';
 import type { Context } from '../shared/context.ts';
 import { readStamp } from '../unit/framework.ts';
 import { checkUnit, short, syncUnit, unitsOf } from './sync.ts';
@@ -33,21 +35,31 @@ export function pin(ctx: Context, target: string | undefined, wanted: string | u
   updateMirror(ctx.run, mirror, ctx.repo);
 
   const tags = listTags(ctx.run, mirror);
-  const tag = wanted === 'latest' ? latestTag(tags) : wanted;
+  // a unit holding a plugin app only takes framework 6 and later, so latest and the hint keep to those
+  const apps = pluginApps(unit.dir);
+  const floor = floorFor(apps);
+  const tag = wanted === 'latest' ? latestTag(tags, floor) : wanted;
 
   if (!tag) {
-    throw new Error(`the framework has no tag of framework ${FRAMEWORK_MIN_MAJOR} or later for latest yet`);
+    throw new Error(`the framework has no tag of framework ${floor} or later for latest yet`);
   }
 
-  // the hint only offers tags this paf can pin
-  const recent = fillableTags(tags).sort(compareTags).reverse().slice(0, 5).join(', ') || 'none yet';
+  // the hint only offers tags this unit can pin
+  const recent = fillableTags(tags, floor).sort(compareTags).reverse().slice(0, 5).join(', ') || 'none yet';
+  const major = majorOf(tag);
+
+  // a plugin app is told it needs framework 6 even for a framework 3 tag, since paf 1.0.0 cannot help it
+  if (apps.length && major !== null && major < floor) {
+    throw new Error(`cannot pin ${tag}, since ${pluginAppsNeed(apps)}. Recent ones: ${recent}`);
+  }
+
   // a pin has to be a version tag of framework 4 or later, since the changelog it prints, latest, and
   // the tag order all read it as one. it is checked before the mirror is asked for its commit, and before anything is
   // printed or written
   const why = unfillable(tag);
 
   if (why) {
-    throw new Error(`cannot pin ${why}. This paf pins framework ${FRAMEWORK_MIN_MAJOR} and later tags. Recent ones: ${recent}`);
+    throw new Error(`cannot pin ${why}. ${apps.length ? `${unit.name} takes framework ${floor}` : `This paf pins framework ${FRAMEWORK_MIN_MAJOR}`} and later tags. Recent ones: ${recent}`);
   }
 
   const commit = resolveRef(ctx.run, mirror, tag);
@@ -132,12 +144,21 @@ export function pin(ctx: Context, target: string | undefined, wanted: string | u
       ? `${entries - breaking.length} other changelog entries being left behind. The full list is in paf/CHANGELOG.md until the pin moves`
       : `${entries - breaking.length} other changelog entries. The full list is in paf/CHANGELOG.md once the pin moves`);
 
-    // the face names are only for the hint, so an appinfo that cannot be read leaves the hint out
+    // a plugin app has nothing to generate, so the hint names only the other faces
+    // and a unit of only plugin apps gets none
+    // the names are only for the hint, so an appinfo that cannot be read gives the hint without them
     // rather than stopping the pin after its changelog has printed
+    // a unit that is a plugin app itself is then the only one known to hold nothing to generate
     try {
-      ctx.print(`then run paf gen <face> all for ${unitFaces(unit.dir).map((face) => face.name).join(', ')}`);
+      const faces = unitFaces(unit.dir).map((face) => face.name).filter((name) => !apps.includes(name));
+
+      if (faces.length) {
+        ctx.print(`then run paf gen <face> all for ${faces.join(', ')}`);
+      }
     } catch {
-      ctx.print('then run paf gen <face> all for each face in the unit');
+      if (!(apps.length && fs.existsSync(path.join(unit.dir, APPINFO_REL)))) {
+        ctx.print('then run paf gen <face> all for each face in the unit');
+      }
     }
   }
 

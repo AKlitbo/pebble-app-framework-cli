@@ -2,6 +2,17 @@
 
 All notable changes to paf are recorded here, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Added units under `plugins/`, beside `watchfaces/` and `watchapps/`, for a repo of plugin apps. A plugin app is a face whose `pebble.appinfo.json` sets `"projectType": "plugin"`. paf syncs and builds it like any face, and `paf status` marks it `(plugin app)`.
+
+### Changed
+
+- `paf pin` and every command that readies a unit now refuse a tag before framework 6 for a unit holding a plugin app, since an older framework builds it as a watchface and stops partway. `paf status` and `paf doctor` show such a unit as a problem.
+- `paf pin <unit> latest` and the LATEST column of `paf status` now take the newest tag of framework 6 or later for a unit holding a plugin app, which is a candidate while framework 6 has no release.
+
 ## [2.1.0] - 2026-11-05
 
 ### Changed
@@ -50,6 +61,7 @@ All notable changes to paf are recorded here, following [Keep a Changelog](https
 
 - Initial release of the Pebble App Framework CLI.
 
+[Unreleased]: https://github.com/AKlitbo/pebble-app-framework-cli/compare/v2.1.0...HEAD
 [2.1.0]: https://github.com/AKlitbo/pebble-app-framework-cli/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/AKlitbo/pebble-app-framework-cli/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/AKlitbo/pebble-app-framework-cli/commits/v1.0.0

@@ -96,6 +96,35 @@ describe('status', () => {
     expect(printed[1]).toMatch(/v4\.1\.0-rc\.27\s+v4\.1\.0-rc\.27/);
   });
 
+  /** A plugin app offered the framework 5 release as LATEST would be pointed at a tag paf pin refuses it. */
+  test('marks a plugin app and offers it the newest framework 6 tag', () => {
+    const root = makeTree({
+      'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v5.0.0', commit: 'a'.repeat(40) }),
+      'plugins/calendar-ical/paf.config.json': JSON.stringify({ framework: 'v6.0.0-rc.1', commit: 'a'.repeat(40) }),
+      'plugins/calendar-ical/pebble.appinfo.json': '{ "name": "calendar-ical", "projectType": "plugin" }',
+    });
+    const { ctx, printed } = makeContext(root, fakeRunner((command, args) => (args.includes('tag') ? { stdout: 'v5.0.0\nv6.0.0-rc.1\n' } : undefined)).run);
+
+    status(ctx);
+
+    expect(printed.find((line) => line.startsWith('watchfaces/mosaic'))).toMatch(/v5\.0\.0\s+v5\.0\.0/);
+    expect(printed.find((line) => line.startsWith('plugins/calendar-ical'))).toMatch(/calendar-ical \(plugin app\)\s+v6\.0\.0-rc\.1\s+v6\.0\.0-rc\.1/);
+    expect(printed.some((line) => line.includes('its LATEST is a candidate'))).toBe(true);
+  });
+
+  /** Once framework 6 has a release, a line calling a plugin app's LATEST a candidate is wrong about the tag beside it. */
+  test("leaves out the candidate line once a plugin app's LATEST is a release", () => {
+    const root = makeTree({
+      'plugins/calendar-ical/paf.config.json': JSON.stringify({ framework: 'v6.0.0', commit: 'a'.repeat(40) }),
+      'plugins/calendar-ical/pebble.appinfo.json': '{ "name": "calendar-ical", "projectType": "plugin" }',
+    });
+    const { ctx, printed } = makeContext(root, fakeRunner((command, args) => (args.includes('tag') ? { stdout: 'v5.0.0\nv6.0.0-rc.1\nv6.0.0\n' } : undefined)).run);
+
+    status(ctx);
+
+    expect(printed.filter((line) => line.includes('its LATEST is a candidate'))).toEqual([]);
+  });
+
   /** A unit renamed from paf.json showed its tag as ?, hiding the pin it had to move off. */
   test('shows a framework 3 pin as its tag and the unit as a problem', () => {
     const root = makeTree({ 'watchfaces/mosaic/paf.config.json': JSON.stringify({ framework: 'v3.0.0', commit: 'a'.repeat(40) }) });
