@@ -2,7 +2,7 @@
 
 All notable changes to paf are recorded here, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [2.2.0] - 2026-11-10
 
 ### Added
 
@@ -62,7 +62,7 @@ All notable changes to paf are recorded here, following [Keep a Changelog](https
 
 - Initial release of the Pebble App Framework CLI.
 
-[Unreleased]: https://github.com/AKlitbo/pebble-app-framework-cli/compare/v2.1.0...HEAD
+[2.2.0]: https://github.com/AKlitbo/pebble-app-framework-cli/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/AKlitbo/pebble-app-framework-cli/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/AKlitbo/pebble-app-framework-cli/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/AKlitbo/pebble-app-framework-cli/commits/v1.0.0
