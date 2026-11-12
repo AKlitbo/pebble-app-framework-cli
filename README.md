@@ -1,22 +1,37 @@
 # Pebble App Framework CLI
 
-The `paf` command pins each family or face in a repo to its own [pebble-app-framework](https://github.com/AKlitbo/pebble-app-framework) version, and builds and checks it against that version. Moving one family to a new framework leaves every other unit on the tag it already has.
+`paf` gives each Pebble watchface, family, or plugin app in a repo its own copy of the [Pebble App Framework](https://github.com/AKlitbo/pebble-app-framework), pinned to a version, and builds and checks it against that copy.
 
-`paf build` runs `pebble build` for you, once the framework's build script has staged the face into `targets/`. Every other `pebble` command is yours to run the usual way, such as installing an app, the emulator, logs, screenshots, and SDK installs.
+Moving one family to a new framework leaves every other unit on the tag it already has. `paf build` runs `pebble build` for you once the framework has staged the face into `targets/`. Every other `pebble` command is yours to run the usual way, such as installing an app, the emulator, logs, screenshots, and SDK installs. The [paf pages](https://aklitbo.github.io/pebble-app-framework/main/paf/) on the framework's docs site cover each command with examples, common workflows, and troubleshooting.
 
-The [paf pages](https://aklitbo.github.io/pebble-app-framework/main/paf/) on the framework's docs site cover each command with examples, common workflows, and troubleshooting.
+## Features
+
+- A framework copy for each unit, pinned to a tag and its commit.
+- The breaking changes between two tags, printed before a unit moves to the newer one.
+- Builds from WSL, Linux, or macOS, clean when a face's keys, dependencies, or framework changed.
+- The framework's generators, checks, lint, format, and tools, run in the unit's own copy.
+- A local framework clone in place of the tag, uncommitted edits included, for working on both at once.
+- A `doctor` that checks git, Node, the pins, the layout, the SDK, and the workflows.
+- A GitHub Action that syncs a face repo's units in CI.
 
 ## Install
 
 Each release on GitHub carries the built package. Install it with npm, in WSL and on Windows alike:
 
 ```sh
-npm i -g https://github.com/AKlitbo/pebble-app-framework-cli/releases/download/v2.1.0/pebble-app-framework-cli-2.1.0.tgz
+npm i -g https://github.com/AKlitbo/pebble-app-framework-cli/releases/download/v2.2.0/pebble-app-framework-cli-2.2.0.tgz
 ```
 
-`paf` needs Node 22.18 or later with the npm it ships with, and `git`. It has no runtime dependencies. The framework's tools need the Node range in its `engines.node`, which on framework 4 and 5 is 22.18 or later on Node 22, or 24.2 or later.
+`paf` needs Node 22.18 or later with the npm it ships with, and `git`. It has no runtime dependencies. The framework's tools need the Node range in its `engines.node`, which on framework 4 through 6 is 22.18 or later on Node 22, or 24.2 or later.
 
-`paf 2.1.0` fills framework 4 and every later framework that keeps its layout. A unit on framework 3 needs `paf 1.0.0`.
+`paf 2.0.0` and later fill framework 4 and every later framework that keeps its layout. Plugin apps need `paf 2.2.0` and framework 6. A unit on framework 3 needs `paf 1.0.0`.
+
+## Getting Started
+
+1. **Make a Unit.** Give a face or a family a `paf.config.json`, even an empty `{}`, and `paf pin <unit> latest` names the newest framework tag in it.
+2. **List the Workspaces.** The unit's `package.json` lists `paf` and `paf/plugins/*` as npm workspaces.
+3. **Ignore What paf Fills.** Add `paf/`, `paf.paf-*/`, `node_modules/`, and `targets/` to the unit's `.gitignore`.
+4. **Sync and Build.** `paf sync` fills the unit's `paf/` and installs, and `paf build <face>` makes the `.pbw`.
 
 ## Units
 
@@ -28,10 +43,8 @@ A unit is a folder with a `paf.config.json`:
 
 Each unit works like a small repo of its own. A face is any folder holding a `pebble.appinfo.json`. In a face of its own that is the unit's folder. In a family it is each folder beside `core/`.
 
-A plugin app is a Pebble app plugin with no watch code, which serves data to watchfaces through the Pebble app. It is a face whose appinfo sets `"projectType": "plugin"`, and a repo of them keeps each under `plugins/`. paf finds, syncs, and builds it like any face, and `paf status` marks it `(plugin app)`. Plugin apps need framework 6 or later, so `paf pin` refuses an older tag for a unit holding one, and `paf pin <unit> latest` takes the newest tag of framework 6 or later, a candidate while framework 6 has no release. A unit already pinned to an older tag stops every command that reads its pin, other than one building from a local clone through `paf use <unit> local`, and shows as a problem in `paf status`.
-
 ```
-watchfaces/mosaic/
+watchfaces/my-family/
   paf.config.json     the framework tag, its plugins, and the unit's own generators
   package.json        the unit's scripts, with workspaces: ["paf", "paf/plugins/*"]
   package-lock.json
@@ -41,18 +54,18 @@ watchfaces/mosaic/
   paf/                the framework, filled by paf sync
   node_modules/
   core/               the code the family's faces share
-  gridlock/           a face, with its pebble.appinfo.json, src/, and resources/
-  sidereel/
+  my-face/            a face, with its pebble.appinfo.json, src/, and resources/
+  other-face/
 ```
 
 `paf.config.json` names the tag, the commit it pointed at when it was pinned, the framework plugins the unit lists with each one's settings, and the unit's own generators:
 
 ```json
 {
-  "framework": "v4.0.0",
+  "framework": "v6.1.0",
   "commit": "…",
-  "plugins": { "icons": { "sources": "../../vendor" }, "thumbnails": {} },
-  "gen": { "vibrant": { "script": "core/tools/vibrant/generate-vibrant.ts", "after": "clay" } }
+  "plugins": { "icons": { "sources": "icons" }, "thumbnails": {} },
+  "gen": { "palette": { "script": "core/tools/palette.ts", "after": "clay" } }
 }
 ```
 
@@ -60,11 +73,17 @@ watchfaces/mosaic/
 
 If the tag later points at a different commit, `paf sync` stops. Run `paf pin <unit> <tag>` again to accept it.
 
+### Plugin Apps
+
+A plugin app is a Pebble app plugin with no watch code, which serves data to watchfaces through the Pebble app. It is a face whose appinfo sets `"projectType": "plugin"`, and a repo of them keeps each under `plugins/`. paf finds, syncs, and builds it like any face, and `paf status` marks it `(plugin app)`.
+
+Plugin apps need framework 6 or later, so `paf pin` refuses an older tag for a unit holding one, and `paf pin <unit> latest` takes the newest tag of framework 6 or later. A unit already pinned to an older tag stops every command that reads its pin, other than one building from a local clone through `paf use <unit> local`, and shows as a problem in `paf status`.
+
 ## Commands
 
 Wherever a command takes `[unit]`, a face name works too and picks the unit that holds it. Leaving it out runs every unit.
 
-| Command | What it does |
+| Command | What It Does |
 | :-- | :-- |
 | `paf sync [unit] [--locked] [--force]` | Fills each unit's `paf/` from its tag and installs its `node_modules`. `--locked` is for CI. It installs from the lock with `npm ci` and stops rather than write `paf.config.json` or the lock. `--force` reinstalls a `node_modules` made on the other system. |
 | `paf status` | Shows each unit's faces, its tag, the newest framework tag, and whether it is ready. |
@@ -91,12 +110,12 @@ A unit generator's `script` is a `.ts` file, with its path from the unit.
 
 ## CI
 
-The sync action installs `paf 2.1.0` and runs `paf sync --locked` in a face repo's workflow. Load it at the release tag:
+The sync action installs the `paf` from the tag the workflow loads it at, and runs `paf sync --locked` in a face repo's workflow:
 
 ```yaml
-- uses: AKlitbo/pebble-app-framework-cli/.github/actions/sync@v2.1.0
+- uses: AKlitbo/pebble-app-framework-cli/.github/actions/sync@v2.2.0
   with:
-    face: gridlock
+    face: my-face
 ```
 
 Its `face` input fills only the unit that face builds from, and leaving it empty fills every unit. `node-version` defaults to 24 and has to fall inside the framework's `engines.node`, read from `paf/package.json`.
@@ -111,14 +130,16 @@ The framework mirrors live in `~/.cache/paf/` on Linux, WSL, and macOS, or in `$
 
 A unit's `node_modules` holds native binaries for one system. `paf sync` from Windows stops on a unit installed from WSL, and the other way round. `paf sync --force` reinstalls it for the system you are on, which breaks it for the other.
 
-## What `paf` Reads from the Framework
+## What paf Reads from the Framework
 
 `paf` reads what it needs from the framework at each unit's tag.
 
-* `src/` is the folder copied into each unit's `paf/`.
-* The `paf` key in `src/package.json` and in each plugin's `package.json` names the build script, the generators, the checks, the tools, and the lint and format scripts. `paf` runs whatever the keys name, so a new generator, check, or tool reaches a unit once the unit pins a tag that has it, and lists its plugin when a plugin offers it.
-* `engines.node` in `src/package.json` is the Node range `paf build`, `gen`, `check`, `tool`, `lint`, and `format` refuse to run outside.
-* `toolchain.json` at the top of `paf/` records the SDK, the pebble-tool, and the Node major the tag was built with, under a `format` number `paf` reads for every tag it fills.
+| Path | What paf Takes from It |
+| :-- | :-- |
+| `src/` | The folder copied into each unit's `paf/`. |
+| The `paf` key in `src/package.json` and each plugin's `package.json` | The build script, the generators, the checks, the tools, and the lint and format scripts. `paf` runs whatever the keys name, so a new generator, check, or tool reaches a unit once the unit pins a tag that has it, and lists its plugin when a plugin offers it. |
+| `engines.node` in `src/package.json` | The Node range `paf build`, `gen`, `check`, `tool`, `lint`, and `format` refuse to run outside. |
+| `toolchain.json` at the top of `paf/` | The SDK, the pebble-tool, and the Node major the tag was built with, under a `format` number `paf` reads for every tag it fills. |
 
 ## Development
 
@@ -133,3 +154,7 @@ node <this repo>/src/cli.ts status   # run from source, from inside a face repo
 ## Licence
 
 AGPL-3.0-or-later or PolyForm Noncommercial 1.0.0, whichever the licensee picks. See [LICENSE](LICENSE).
+
+## AI Training
+
+Please do not use this repository for training, fine-tuning, or evaluating artificial intelligence or machine learning models. This is a request and not a term of either licence.
